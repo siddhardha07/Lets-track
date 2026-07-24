@@ -4,10 +4,14 @@ import android.app.Application
 import androidx.room.Room
 import com.letstrack.app.data.local.DatabaseCallback
 import com.letstrack.app.data.local.LetsTrackDatabase
+import com.letstrack.app.data.local.dao.BankAccountDao
 import com.letstrack.app.data.local.dao.CategoryDao
 import com.letstrack.app.data.local.dao.ExpenseDao
+import com.letstrack.app.data.local.dao.SmsTransactionDao
+import com.letstrack.app.data.repository.BankAccountRepositoryImpl
 import com.letstrack.app.data.repository.CategoryRepositoryImpl
 import com.letstrack.app.data.repository.ExpenseRepositoryImpl
+import com.letstrack.app.domain.repository.BankAccountRepository
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
 import dagger.Module
@@ -59,6 +63,16 @@ object AppModule {
     fun provideCategoryDao(database: LetsTrackDatabase): CategoryDao {
         return database.categoryDao()
     }
+    
+    @Provides
+    fun provideBankAccountDao(database: LetsTrackDatabase): BankAccountDao {
+        return database.bankAccountDao()
+    }
+    
+    @Provides
+    fun provideSmsTransactionDao(database: LetsTrackDatabase): SmsTransactionDao {
+        return database.smsTransactionDao()
+    }
 
     @Provides
     @Singleton
@@ -70,5 +84,11 @@ object AppModule {
     @Singleton
     fun provideCategoryRepository(categoryDao: CategoryDao): CategoryRepository {
         return CategoryRepositoryImpl(categoryDao)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideBankAccountRepository(bankAccountDao: BankAccountDao): BankAccountRepository {
+        return BankAccountRepositoryImpl(bankAccountDao)
     }
 }

@@ -20,6 +20,7 @@ data class SmsTransactionEntity(
     val transactionType: String? = null, // DEBIT, CREDIT
     val cardType: String? = null, // UPI, CARD, NEFT, etc.
     val accountNumber: String? = null, // Last 4 digits
+    val extractedBalance: Double? = null, // Balance after transaction
     
     // Processing status
     val isParsed: Boolean = false,

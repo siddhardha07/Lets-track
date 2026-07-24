@@ -76,7 +76,8 @@ class ExpenseRepositoryImpl @Inject constructor(
         confidenceScore = confidenceScore,
         isAiCategorized = isAiCategorized,
         needsReview = needsReview,
-        transactionType = transactionType
+        transactionType = transactionType,
+        balanceAfterTransaction = balanceAfterTransaction
     )
 
     private fun Expense.toEntity() = ExpenseEntity(
@@ -99,6 +100,7 @@ class ExpenseRepositoryImpl @Inject constructor(
         confidenceScore = confidenceScore,
         isAiCategorized = isAiCategorized,
         needsReview = needsReview,
-        transactionType = transactionType
+        transactionType = transactionType,
+        balanceAfterTransaction = balanceAfterTransaction
     )
 }

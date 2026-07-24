@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" 
         android:maxSdkVersion="28" />
+    
+    <!-- SMS Permissions for transaction tracking -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    
+    <!-- Declare telephony feature as not required so app works on tablets -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <application
         android:name=".LetsTrackApp"
@@ -36,6 +44,27 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        
+        <!-- SMS Broadcast Receiver for incoming SMS -->
+        <receiver
+            android:name=".sms.SmsBroadcastReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+        
+        <!-- Boot receiver to re-register SMS listener -->
+        <receiver
+            android:name=".sms.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

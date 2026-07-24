@@ -35,4 +35,7 @@ data class ExpenseEntity(
     
     // Transaction type
     val transactionType: String = "DEBIT", // DEBIT or CREDIT
+    
+    // Balance after transaction (from bank SMS)
+    val balanceAfterTransaction: Double? = null,
 )

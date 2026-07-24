@@ -20,6 +20,8 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun ProfileScreen(
+    onNavigateToAccounts: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
     viewModel: ExpensesViewModel = hiltViewModel()
 ) {
     Column(
@@ -65,7 +67,7 @@ fun ProfileScreen(
         
         Spacer(modifier = Modifier.height(24.dp))
         
-        // Profile Options (Placeholders)
+        // Profile Options
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -75,27 +77,34 @@ fun ProfileScreen(
             Column(
                 modifier = Modifier.padding(16.dp)
             ) {
-                ProfileOption("Edit Profile")
+                ProfileOption(
+                    title = "🏦 Bank Accounts",
+                    onClick = onNavigateToAccounts
+                )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                ProfileOption("Settings")
+                ProfileOption(
+                    title = "⚙️ Settings",
+                    onClick = onNavigateToSettings
+                )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                ProfileOption("Categories")
+                ProfileOption(title = "📂 Categories")
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                ProfileOption("Export Data")
+                ProfileOption(title = "📤 Export Data")
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                ProfileOption("About")
+                ProfileOption(title = "ℹ️ About")
             }
         }
     }
 }
 
 @Composable
-fun ProfileOption(title: String) {
+fun ProfileOption(title: String, onClick: () -> Unit = {}) {
     Text(
         text = title,
         style = MaterialTheme.typography.bodyLarge,
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(vertical = 8.dp)
     )
 }

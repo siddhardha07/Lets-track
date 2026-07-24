@@ -147,7 +147,14 @@ class ExpensesViewModel @Inject constructor(
                     
                 _totalDebited.value = totalDebited
                 _totalCredited.value = totalCredited
-                _totalBalance.value = totalCredited - totalDebited
+                
+                // Use balance from latest SMS transaction if available
+                val latestBalanceFromSms = expenses
+                    .filter { it.source == "SMS" && it.balanceAfterTransaction != null }
+                    .maxByOrNull { it.date }
+                    ?.balanceAfterTransaction
+                
+                _totalBalance.value = latestBalanceFromSms ?: (totalCredited - totalDebited)
             }
         }
     }

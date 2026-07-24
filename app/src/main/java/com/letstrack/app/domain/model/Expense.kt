@@ -32,7 +32,10 @@ data class Expense(
     val needsReview: Boolean = false,
     
     // Transaction type
-    val transactionType: String = "DEBIT"
+    val transactionType: String = "DEBIT",
+    
+    // Balance after transaction (from bank SMS)
+    val balanceAfterTransaction: Double? = null
 ) {
     fun getLocalDateTime(): LocalDateTime {
         return LocalDateTime.ofInstant(
