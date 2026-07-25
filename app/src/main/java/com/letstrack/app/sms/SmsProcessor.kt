@@ -19,32 +19,42 @@ class SmsProcessor @Inject constructor(
     private val expenseDao: ExpenseDao,
     private val smsParser: SmsParser
 ) {
-    
+
     companion object {
         private const val TAG = "SmsProcessor"
         private const val CONFIDENCE_THRESHOLD = 60.0 // Below this, transaction needs review
     }
-    
+
     /**
      * Process an incoming SMS message
      */
     suspend fun processSms(sender: String, message: String, timestamp: Long): Boolean {
         try {
             Log.d(TAG, "Processing SMS from $sender at $timestamp")
-            
-            // Check for duplicate
+
+            // Check for duplicate - but allow re-import if the expense was deleted
             val existingSms = smsTransactionDao.findDuplicateSms(message, timestamp)
-            if (existingSms != null) {
-                Log.d(TAG, "Duplicate SMS detected, skipping")
-                return false
+            if (existingSms != null && existingSms.isMatched) {
+                // Check if the matched expense still exists
+                val expenseExists = existingSms.matchedExpenseId?.let { expenseId ->
+                    expenseDao.getExpenseById(expenseId) != null
+                }
+
+                if (expenseExists == true) {
+                    Log.d(TAG, "Duplicate SMS detected with existing expense, skipping")
+                    return false
+                } else {
+                    Log.d(TAG, "SMS exists but expense was deleted, allowing re-import")
+                    // Continue processing to create new expense
+                }
             }
-            
+
             // Parse the SMS
             val parsed = smsParser.parseSms(message, sender)
-            
+
             // Check if we have a matching bank account
             val matchingAccount = findMatchingAccount(sender, parsed.accountNumber)
-            
+
             // Create SMS transaction entity
             val smsEntity = SmsTransactionEntity(
                 sender = sender,
@@ -60,18 +70,18 @@ class SmsProcessor @Inject constructor(
                 isMatched = false,
                 createdAt = System.currentTimeMillis()
             )
-            
+
             // Save to database
             val id = smsTransactionDao.insertSms(smsEntity)
-            
+
             if (id > 0) {
                 Log.d(TAG, "SMS saved successfully with ID: $id, confidence: ${parsed.confidence}%")
-                
+
                 // Update bank account usage statistics
                 if (matchingAccount != null) {
                     updateAccountStats(matchingAccount.id, timestamp)
                 }
-                
+
                 // Auto-create expense if confidence is high enough
                 if (parsed.confidence >= CONFIDENCE_THRESHOLD && parsed.amount != null && parsed.transactionType != null) {
                     val expenseId = createExpenseFromSms(parsed, matchingAccount, timestamp, id)
@@ -81,19 +91,19 @@ class SmsProcessor @Inject constructor(
                         Log.d(TAG, "Auto-created expense entry with ID: $expenseId")
                     }
                 }
-                
+
                 return true
             } else {
                 Log.w(TAG, "Failed to save SMS")
                 return false
             }
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error processing SMS: ${e.message}", e)
             return false
         }
     }
-    
+
     /**
      * Create expense entry from parsed SMS
      */
@@ -104,13 +114,11 @@ class SmsProcessor @Inject constructor(
         smsId: Long
     ): Long {
         return try {
-            val categoryName = determineCategory(parsed.merchant, parsed.cardType)
-            
             val expenseEntity = ExpenseEntity(
                 amount = parsed.amount ?: 0.0,
                 categoryId = 1L, // Default category - will be properly categorized later
                 title = parsed.merchant ?: "Bank Transaction",
-                description = "${parsed.cardType ?: "Bank"} transaction",
+                description = parsed.fullSmsMessage ?: "${parsed.cardType ?: "Bank"} transaction",
                 notes = "Auto-imported from SMS",
                 date = timestamp,
                 source = "SMS",
@@ -124,7 +132,7 @@ class SmsProcessor @Inject constructor(
                 needsReview = parsed.confidence < CONFIDENCE_THRESHOLD,
                 createdAt = System.currentTimeMillis()
             )
-            
+
             val expenseId = expenseDao.insertExpense(expenseEntity)
             Log.d(TAG, "Created expense: ${expenseEntity.transactionType} Rs.${expenseEntity.amount} at ${expenseEntity.title}")
             expenseId
@@ -133,68 +141,68 @@ class SmsProcessor @Inject constructor(
             -1
         }
     }
-    
+
     /**
      * Determine category based on merchant name and transaction type
      */
     private fun determineCategory(merchant: String?, cardType: String?): String {
         // Simple heuristic-based categorization
         val lowerMerchant = merchant?.lowercase() ?: ""
-        
+
         return when {
             // Food & Dining
             lowerMerchant.contains("swiggy") || lowerMerchant.contains("zomato") ||
             lowerMerchant.contains("restaurant") || lowerMerchant.contains("cafe") ||
             lowerMerchant.contains("food") -> "Food & Dining"
-            
+
             // Shopping
             lowerMerchant.contains("amazon") || lowerMerchant.contains("flipkart") ||
             lowerMerchant.contains("myntra") || lowerMerchant.contains("store") ||
             lowerMerchant.contains("shop") -> "Shopping"
-            
+
             // Transport
             lowerMerchant.contains("uber") || lowerMerchant.contains("ola") ||
             lowerMerchant.contains("rapido") || lowerMerchant.contains("petrol") ||
             lowerMerchant.contains("fuel") -> "Transport"
-            
+
             // Bills & Utilities
             lowerMerchant.contains("electric") || lowerMerchant.contains("water") ||
             lowerMerchant.contains("gas") || lowerMerchant.contains("recharge") ||
             lowerMerchant.contains("bill") -> "Bills & Utilities"
-            
+
             // Entertainment
             lowerMerchant.contains("netflix") || lowerMerchant.contains("prime") ||
             lowerMerchant.contains("hotstar") || lowerMerchant.contains("spotify") ||
             lowerMerchant.contains("movie") -> "Entertainment"
-            
+
             // ATM withdrawal
             cardType == "ATM" -> "Cash"
-            
+
             // UPI transfer
             cardType == "UPI" -> "Transfer"
-            
+
             // Default
             else -> "Other"
         }
     }
-    
+
     /**
      * Find matching bank account for the SMS
      */
     private suspend fun findMatchingAccount(sender: String, accountNumber: String?): com.letstrack.app.data.local.entity.BankAccountEntity? {
         if (accountNumber == null) return null
-        
+
         // Get all active accounts
         val accounts = bankAccountDao.getAllAccounts()
-        
+
         // Try to match by account number
         val matchedByAccount = accounts.find { account ->
-            accountNumber.endsWith(account.accountNumber) || 
+            accountNumber.endsWith(account.accountNumber) ||
             account.accountNumber.endsWith(accountNumber)
         }
-        
+
         if (matchedByAccount != null) return matchedByAccount
-        
+
         // Try to match by sender pattern
         val matchedBySender = accounts.find { account ->
             val senderPatterns = try {
@@ -206,15 +214,15 @@ class SmsProcessor @Inject constructor(
             } catch (e: Exception) {
                 emptyList()
             }
-            
+
             senderPatterns.any { pattern ->
                 sender.contains(pattern, ignoreCase = true)
             }
         }
-        
+
         return matchedBySender
     }
-    
+
     /**
      * Update bank account statistics
      */

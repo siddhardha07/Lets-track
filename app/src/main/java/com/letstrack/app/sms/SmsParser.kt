@@ -74,7 +74,8 @@ class SmsParser {
         val balance: Double?,
         val cardType: String?,
         val date: String?,
-        val confidence: Double // 0-100
+        val confidence: Double, // 0-100
+        val fullSmsMessage: String? = null // Store complete SMS for reference
     )
     
     /**
@@ -126,7 +127,8 @@ class SmsParser {
             balance = balance,
             cardType = cardType,
             date = date,
-            confidence = confidence
+            confidence = confidence,
+            fullSmsMessage = message // Store the full SMS for reference
         )
     }
     

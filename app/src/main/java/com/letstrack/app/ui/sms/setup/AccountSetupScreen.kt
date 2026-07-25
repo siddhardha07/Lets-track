@@ -24,7 +24,7 @@ fun AccountSetupScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Add Bank Account") },
+                title = { Text(if (uiState.isEditMode) "Edit Bank Account" else "Add Bank Account") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -40,7 +40,7 @@ fun AccountSetupScreen(
         floatingActionButton = {
             if (!uiState.showPreview) {
                 FloatingActionButton(
-                    onClick = { 
+                    onClick = {
                         viewModel.parseAndSaveAccount(onSuccess = {})
                     },
                     containerColor = MaterialTheme.colorScheme.primary
@@ -98,6 +98,41 @@ fun AccountSetupScreen(
                 }
             }
 
+            // Show current account info when editing
+            if (uiState.isEditMode && uiState.parsedBankName.isNotEmpty()) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Current Account Details",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        if (uiState.parsedBankName.isNotEmpty()) {
+                            DetailRow("Bank", uiState.parsedBankName)
+                        }
+                        if (uiState.parsedAccountNumber.isNotEmpty()) {
+                            DetailRow("Account", "...${uiState.parsedAccountNumber}")
+                        }
+                        if (uiState.parsedSenders.isNotEmpty()) {
+                            DetailRow("SMS Senders", uiState.parsedSenders.joinToString(", "))
+                        }
+                        Text(
+                            text = "Update SMS samples below if your bank's format changed",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+
             // Account Nickname (Optional)
             OutlinedTextField(
                 value = uiState.accountNickname,
@@ -117,8 +152,8 @@ fun AccountSetupScreen(
             OutlinedTextField(
                 value = uiState.debitSms,
                 onValueChange = { viewModel.onDebitSmsChange(it) },
-                placeholder = { 
-                    Text("Paste debit SMS here\n\nExample:\nYour A/c XX3937 debited by Rs. 172.72 on 16/07/26...") 
+                placeholder = {
+                    Text("Paste debit SMS here\n\nExample:\nYour A/c XX3937 debited by Rs. 172.72 on 16/07/26...")
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -136,8 +171,8 @@ fun AccountSetupScreen(
             OutlinedTextField(
                 value = uiState.creditSms,
                 onValueChange = { viewModel.onCreditSmsChange(it) },
-                placeholder = { 
-                    Text("Paste credit SMS here\n\nExample:\nYour A/C XXXXX023937 is credited with INR 25.14...") 
+                placeholder = {
+                    Text("Paste credit SMS here\n\nExample:\nYour A/C XXXXX023937 is credited with INR 25.14...")
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -222,13 +257,13 @@ fun PreviewDialog(
                     text = "We found these details from your SMS samples:",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                
+
                 DetailRow("Bank", bankName)
                 DetailRow("Account Number (last digits)", accountNumber)
                 DetailRow("SMS Senders", senders.joinToString(", "))
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 Text(
                     text = "✓ Your account is ready to track transactions!",
                     style = MaterialTheme.typography.bodySmall,
