@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
+import com.letstrack.app.ui.components.DateRange
+import com.letstrack.app.ui.components.DateRangePicker
 import com.letstrack.app.ui.home.formatCurrency
 import com.letstrack.app.ui.home.formatDate
 import com.letstrack.app.ui.home.parseColor
@@ -90,24 +92,22 @@ fun ExpensesScreen(
                         label = { Text("Today") }
                     )
 
-                    // Custom date range filter (three dots)
+                    // Custom date range filter
                     var showCustomDialog by remember { mutableStateOf(false) }
                     FilterChip(
                         selected = dateFilter == DateFilter.CUSTOM,
                         onClick = { showCustomDialog = true },
-                        label = { Text("⋯") }
+                        label = { Text(if (dateFilter == DateFilter.CUSTOM) "Custom" else "⋯") }
                     )
 
                     if (showCustomDialog) {
-                        AlertDialog(
-                            onDismissRequest = { showCustomDialog = false },
-                            title = { Text("Custom Date Range") },
-                            text = { Text("Custom date picker coming soon!") },
-                            confirmButton = {
-                                TextButton(onClick = { showCustomDialog = false }) {
-                                    Text("OK")
-                                }
-                            }
+                        DateRangePicker(
+                            selectedRange = viewModel.customDateRange.collectAsState().value,
+                            onRangeSelected = { range ->
+                                viewModel.setCustomDateRange(range)
+                                showCustomDialog = false
+                            },
+                            onDismiss = { showCustomDialog = false }
                         )
                     }
                 }

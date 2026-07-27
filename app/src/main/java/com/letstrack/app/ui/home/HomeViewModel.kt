@@ -6,10 +6,37 @@ import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
+import com.letstrack.app.ui.components.DateRange
+import com.letstrack.app.ui.home.BalancePoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.Calendar
 import javax.inject.Inject
+
+data class CategorySpending(
+    val category: Category,
+    val totalAmount: Double,
+    val percentage: Float
+)
+
+data class DailySpending(
+    val date: Long,
+    val amount: Double
+)
+
+data class KeyMetrics(
+    val totalIncome: Double,
+    val totalExpenses: Double,
+    val netBalance: Double,
+    val incomeVsPreviousPeriod: Float,  // % change
+    val expensesVsPreviousPeriod: Float,  // % change
+    val balanceVsPreviousPeriod: Float  // % change
+)
+
+enum class TimeFilter {
+    TODAY, THIS_WEEK, THIS_MONTH, LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, CUSTOM
+}
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -23,13 +50,214 @@ class HomeViewModel @Inject constructor(
     private val _categories = MutableStateFlow<List<Category>>(emptyList())
     val categories: StateFlow<List<Category>> = _categories.asStateFlow()
 
-    private val _totalExpenses = MutableStateFlow(0.0)
-    val totalExpenses: StateFlow<Double> = _totalExpenses.asStateFlow()
+    private val _timeFilter = MutableStateFlow(TimeFilter.THIS_MONTH)
+    val timeFilter: StateFlow<TimeFilter> = _timeFilter.asStateFlow()
+    
+    private val _customDateRange = MutableStateFlow<DateRange?>(null)
+    val customDateRange: StateFlow<DateRange?> = _customDateRange.asStateFlow()
+    
+    private val _selectedCategories = MutableStateFlow<Set<Long>>(emptySet())
+    val selectedCategories: StateFlow<Set<Long>> = _selectedCategories.asStateFlow()
+    
+    private val _transactionType = MutableStateFlow<String?>(null) // null = all, "income", "expense"
+    val transactionType: StateFlow<String?> = _transactionType.asStateFlow()
+
+    // Filtered expenses based on all filters
+    val filteredExpenses: StateFlow<List<Expense>> = combine(
+        _expenses,
+        _timeFilter,
+        _customDateRange,
+        _selectedCategories,
+        _transactionType
+    ) { expenses, timeFilter, customRange, selectedCats, transType ->
+        var filtered = expenses
+        
+        // Apply time filter
+        filtered = when (timeFilter) {
+            TimeFilter.TODAY -> {
+                val todayStart = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                filtered.filter { it.date >= todayStart }
+            }
+            TimeFilter.THIS_WEEK -> {
+                val weekStart = Calendar.getInstance().apply {
+                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                filtered.filter { it.date >= weekStart }
+            }
+            TimeFilter.THIS_MONTH -> {
+                val monthStart = Calendar.getInstance().apply {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                filtered.filter { it.date >= monthStart }
+            }
+            TimeFilter.LAST_7_DAYS -> {
+                val sevenDaysAgo = Calendar.getInstance().apply {
+                    add(Calendar.DAY_OF_YEAR, -7)
+                }.timeInMillis
+                filtered.filter { it.date >= sevenDaysAgo }
+            }
+            TimeFilter.LAST_30_DAYS -> {
+                val thirtyDaysAgo = Calendar.getInstance().apply {
+                    add(Calendar.DAY_OF_YEAR, -30)
+                }.timeInMillis
+                filtered.filter { it.date >= thirtyDaysAgo }
+            }
+            TimeFilter.LAST_90_DAYS -> {
+                val ninetyDaysAgo = Calendar.getInstance().apply {
+                    add(Calendar.DAY_OF_YEAR, -90)
+                }.timeInMillis
+                filtered.filter { it.date >= ninetyDaysAgo }
+            }
+            TimeFilter.CUSTOM -> {
+                if (customRange != null) {
+                    filtered.filter { it.date >= customRange.startDate && it.date <= customRange.endDate }
+                } else {
+                    filtered
+                }
+            }
+        }
+        
+        // Apply category filter
+        if (selectedCats.isNotEmpty()) {
+            filtered = filtered.filter { it.categoryId in selectedCats }
+        }
+        
+        // Apply transaction type filter
+        when (transType) {
+            "income" -> filtered = filtered.filter { it.amount > 0 }
+            "expense" -> filtered = filtered.filter { it.amount < 0 }
+            else -> {}  // Show all
+        }
+        
+        filtered
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Category spending breakdown
+    val categorySpending: StateFlow<List<CategorySpending>> = combine(
+        filteredExpenses,
+        _categories
+    ) { expenses, categories ->
+        val expensesOnly = expenses.filter { it.amount < 0 }
+        val totalSpending = expensesOnly.sumOf { kotlin.math.abs(it.amount) }
+        
+        if (totalSpending == 0.0) {
+            emptyList()
+        } else {
+            val categoryMap = expensesOnly.groupBy { it.categoryId }
+            categoryMap.mapNotNull { (categoryId, expenseList) ->
+                val category = categories.find { it.id == categoryId }
+                if (category != null) {
+                    val amount = expenseList.sumOf { kotlin.math.abs(it.amount) }
+                    CategorySpending(
+                        category = category,
+                        totalAmount = amount,
+                        percentage = (amount / totalSpending * 100).toFloat()
+                    )
+                } else null
+            }.sortedByDescending { it.totalAmount }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Daily spending trend
+    val dailySpending: StateFlow<List<DailySpending>> = filteredExpenses.map { expenses ->
+        val expensesOnly = expenses.filter { it.amount < 0 }
+        expensesOnly.groupBy { expense ->
+            Calendar.getInstance().apply {
+                timeInMillis = expense.date
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }.map { (date, expenseList) ->
+            DailySpending(
+                date = date,
+                amount = expenseList.sumOf { kotlin.math.abs(it.amount) }
+            )
+        }.sortedBy { it.date }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Key metrics with comparison
+    val keyMetrics: StateFlow<KeyMetrics> = combine(
+        filteredExpenses,
+        _expenses,
+        _timeFilter,
+        _customDateRange
+    ) { filtered, allExpenses, timeFilter, customRange ->
+        val totalIncome = filtered.filter { it.amount > 0 }.sumOf { it.amount }
+        val totalExpenses = filtered.filter { it.amount < 0 }.sumOf { kotlin.math.abs(it.amount) }
+        
+        // Calculate previous period
+        val previousPeriodRange = getPreviousPeriodRange(timeFilter, customRange)
+        val previousPeriodExpenses = if (previousPeriodRange != null) {
+            allExpenses.filter { 
+                it.date >= previousPeriodRange.first && it.date <= previousPeriodRange.second 
+            }
+        } else {
+            emptyList()
+        }
+        
+        val prevIncome = previousPeriodExpenses.filter { it.amount > 0 }.sumOf { it.amount }
+        val prevExpenses = previousPeriodExpenses.filter { it.amount < 0 }.sumOf { kotlin.math.abs(it.amount) }
+        val prevBalance = prevIncome - prevExpenses
+        val currentBalance = totalIncome - totalExpenses
+        
+        // Calculate percentage changes
+        val incomeChange = if (prevIncome > 0) ((totalIncome - prevIncome) / prevIncome * 100).toFloat() else 0f
+        val expensesChange = if (prevExpenses > 0) ((totalExpenses - prevExpenses) / prevExpenses * 100).toFloat() else 0f
+        val balanceChange = if (prevBalance != 0.0) ((currentBalance - prevBalance) / kotlin.math.abs(prevBalance) * 100).toFloat() else 0f
+        
+        KeyMetrics(
+            totalIncome = totalIncome,
+            totalExpenses = totalExpenses,
+            netBalance = currentBalance,
+            incomeVsPreviousPeriod = incomeChange,
+            expensesVsPreviousPeriod = expensesChange,
+            balanceVsPreviousPeriod = balanceChange
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), KeyMetrics(0.0, 0.0, 0.0, 0f, 0f, 0f))
+
+    // Recent transactions (last 10)
+    val recentTransactions: StateFlow<List<Expense>> = filteredExpenses.map { expenses ->
+        expenses.sortedByDescending { it.date }.take(10)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Balance over time
+    val balanceOverTime: StateFlow<List<BalancePoint>> = filteredExpenses.map { expenses ->
+        val sortedExpenses = expenses.sortedBy { it.date }
+        var runningBalance = 0.0
+        
+        sortedExpenses.groupBy { expense ->
+            Calendar.getInstance().apply {
+                timeInMillis = expense.date
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }.map { (date, expensesOnDate) ->
+            val dayTotal = expensesOnDate.sumOf { it.amount }
+            runningBalance += dayTotal
+            BalancePoint(date = date, balance = runningBalance)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         loadExpenses()
         loadCategories()
-        loadTotalExpenses()
     }
 
     private fun loadExpenses() {
@@ -48,16 +276,131 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun loadTotalExpenses() {
-        viewModelScope.launch {
-            expenseRepository.getTotalExpenses().collect { total ->
-                _totalExpenses.value = total
-            }
+    fun setTimeFilter(filter: TimeFilter) {
+        _timeFilter.value = filter
+    }
+    
+    fun setCustomDateRange(range: DateRange) {
+        _customDateRange.value = range
+        _timeFilter.value = TimeFilter.CUSTOM
+    }
+    
+    fun toggleCategoryFilter(categoryId: Long) {
+        val current = _selectedCategories.value.toMutableSet()
+        if (categoryId in current) {
+            current.remove(categoryId)
+        } else {
+            current.add(categoryId)
         }
+        _selectedCategories.value = current
+    }
+    
+    fun clearCategoryFilters() {
+        _selectedCategories.value = emptySet()
+    }
+    
+    fun setTransactionType(type: String?) {
+        _transactionType.value = type
     }
 
     fun getCategoryById(categoryId: Long): Category? {
         return _categories.value.find { it.id == categoryId }
+    }
+    
+    private fun getPreviousPeriodRange(timeFilter: TimeFilter, customRange: DateRange?): Pair<Long, Long>? {
+        val calendar = Calendar.getInstance()
+        
+        return when (timeFilter) {
+            TimeFilter.TODAY -> {
+                val yesterday = calendar.apply {
+                    add(Calendar.DAY_OF_YEAR, -1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                val yesterdayEnd = calendar.apply {
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                }.timeInMillis
+                Pair(yesterday, yesterdayEnd)
+            }
+            TimeFilter.THIS_WEEK -> {
+                val lastWeekStart = calendar.apply {
+                    add(Calendar.WEEK_OF_YEAR, -1)
+                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                val lastWeekEnd = Calendar.getInstance().apply {
+                    add(Calendar.WEEK_OF_YEAR, -1)
+                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    add(Calendar.DAY_OF_YEAR, 6)
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                }.timeInMillis
+                Pair(lastWeekStart, lastWeekEnd)
+            }
+            TimeFilter.THIS_MONTH -> {
+                val lastMonthStart = calendar.apply {
+                    add(Calendar.MONTH, -1)
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                val lastMonthEnd = Calendar.getInstance().apply {
+                    add(Calendar.MONTH, -1)
+                    set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                }.timeInMillis
+                Pair(lastMonthStart, lastMonthEnd)
+            }
+            TimeFilter.LAST_7_DAYS -> {
+                val fourteenDaysAgo = calendar.apply {
+                    add(Calendar.DAY_OF_YEAR, -14)
+                }.timeInMillis
+                val sevenDaysAgo = calendar.apply {
+                    add(Calendar.DAY_OF_YEAR, 7)
+                }.timeInMillis
+                Pair(fourteenDaysAgo, sevenDaysAgo)
+            }
+            TimeFilter.LAST_30_DAYS -> {
+                val sixtyDaysAgo = calendar.apply {
+                    add(Calendar.DAY_OF_YEAR, -60)
+                }.timeInMillis
+                val thirtyDaysAgo = calendar.apply {
+                    add(Calendar.DAY_OF_YEAR, 30)
+                }.timeInMillis
+                Pair(sixtyDaysAgo, thirtyDaysAgo)
+            }
+            TimeFilter.LAST_90_DAYS -> {
+                val oneEightyDaysAgo = calendar.apply {
+                    add(Calendar.DAY_OF_YEAR, -180)
+                }.timeInMillis
+                val ninetyDaysAgo = calendar.apply {
+                    add(Calendar.DAY_OF_YEAR, 90)
+                }.timeInMillis
+                Pair(oneEightyDaysAgo, ninetyDaysAgo)
+            }
+            TimeFilter.CUSTOM -> {
+                if (customRange != null) {
+                    val duration = customRange.endDate - customRange.startDate
+                    val prevEnd = customRange.startDate - 1
+                    val prevStart = prevEnd - duration
+                    Pair(prevStart, prevEnd)
+                } else {
+                    null
+                }
+            }
+        }
     }
 
     fun deleteExpense(expense: Expense) {

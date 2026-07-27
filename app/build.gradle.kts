@@ -23,6 +23,15 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("../letstrack-release.keystore")
+            storePassword = "android123"
+            keyAlias = "letstrack"
+            keyPassword = "android123"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -30,6 +39,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -98,6 +108,14 @@ dependencies {
 
     // OkHttp for Wikipedia API
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Vico Charts - Modern Compose charts library
+    implementation("com.patrykandpatrick.vico:compose:1.15.0")
+    implementation("com.patrykandpatrick.vico:compose-m3:1.15.0")
+    implementation("com.patrykandpatrick.vico:core:1.15.0")
+    
+    // Coil for image loading (for category icons if needed)
+    implementation("io.coil-kt:coil-compose:2.6.0")
 
     // Gson for JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")

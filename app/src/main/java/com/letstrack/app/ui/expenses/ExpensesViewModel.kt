@@ -9,6 +9,7 @@ import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
+import com.letstrack.app.ui.components.DateRange
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
@@ -43,6 +44,13 @@ class ExpensesViewModel @Inject constructor(
 
     private val _customStartDate = MutableStateFlow<Long?>(null)
     private val _customEndDate = MutableStateFlow<Long?>(null)
+    
+    val customDateRange: StateFlow<DateRange?> = combine(
+        _customStartDate,
+        _customEndDate
+    ) { start, end ->
+        if (start != null && end != null) DateRange(start, end) else null
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private val _totalBalance = MutableStateFlow(0.0)
     val totalBalance: StateFlow<Double> = _totalBalance.asStateFlow()
@@ -167,12 +175,13 @@ class ExpensesViewModel @Inject constructor(
     fun onDateFilterChange(filter: DateFilter) {
         _dateFilter.value = filter
     }
-
-    fun onCustomDateRangeSet(startDate: Long, endDate: Long) {
-        _customStartDate.value = startDate
-        _customEndDate.value = endDate
+    
+    fun setCustomDateRange(range: DateRange) {
+        _customStartDate.value = range.startDate
+        _customEndDate.value = range.endDate
         _dateFilter.value = DateFilter.CUSTOM
     }
+
 
     fun getCategoryById(categoryId: Long): Category? {
         return _categories.value.find { it.id == categoryId }

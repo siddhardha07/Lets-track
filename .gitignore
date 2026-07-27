@@ -16,3 +16,4 @@ local.properties
 *.apk
 *.aab
 output.json
+letstrack-release.keystore
