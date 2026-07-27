@@ -148,26 +148,27 @@ class TransactionReviewService @Inject constructor(
             )
 
             Log.d(TAG, "✅ Transaction confirmed and learned: ${transaction.merchantName} -> $selectedCategory")
-            
-            // Show immediate confirmation toast
-            withContext(Dispatchers.Main) {
+
+            // Show immediate confirmation toast using Handler for reliability
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
                 Toast.makeText(
                     context,
                     "✓ Saved: ${transaction.merchantName} → $selectedCategory",
-                    Toast.LENGTH_SHORT
+                    Toast.LENGTH_LONG
                 ).show()
+                Log.d(TAG, "🍞 Toast shown: Saved ${transaction.merchantName}")
             }
-            
+
             // Update similar past transactions from bulk imports
             updateSimilarPastTransactions(transaction.merchantName, categoryId, selectedSubCategory)
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error confirming transaction: ${e.message}", e)
         }
     }
 
     /**
-     * Find and update similar past transactions from bulk imports  
+     * Find and update similar past transactions from bulk imports
      * Called after user categorizes a real-time transaction
      */
     private suspend fun updateSimilarPastTransactions(
@@ -177,27 +178,27 @@ class TransactionReviewService @Inject constructor(
     ) {
         try {
             Log.d(TAG, "🔍 Searching for similar past transactions for: $merchantName")
-            
+
             // Get all expenses and categories
             val allExpenses = expenseRepository.getAllExpenses().first()
             val categories = categoryRepository.getAllCategories().first()
             val otherCategory = categories.find { it.name.equals("Other", ignoreCase = true) }
-            
+
             // Find uncategorized expenses with similar merchant names
             val similarExpenses = allExpenses.filter { expense ->
                 val isSameMerchant = expense.title.equals(merchantName, ignoreCase = true) ||
                                     expense.title.contains(merchantName, ignoreCase = true) ||
                                     merchantName.contains(expense.title, ignoreCase = true)
-                val isUncategorized = expense.categoryId == null || 
+                val isUncategorized = expense.categoryId == null ||
                                      expense.categoryId == otherCategory?.id ||
                                      expense.needsReview
-                
+
                 isSameMerchant && isUncategorized
             }
-            
+
             if (similarExpenses.isNotEmpty()) {
                 Log.d(TAG, "📝 Found ${similarExpenses.size} similar past transaction(s) to update")
-                
+
                 similarExpenses.forEach { expense ->
                     val noteAddition = if (expense.notes.isNullOrBlank()) "Auto-categorized" else " | Auto-categorized"
                     val updated = expense.copy(
@@ -209,22 +210,23 @@ class TransactionReviewService @Inject constructor(
                     expenseRepository.updateExpense(updated)
                     Log.d(TAG, "   ✓ Updated: ${expense.title} (₹${expense.amount})")
                 }
-                
+
                 Log.d(TAG, "✅ Updated ${similarExpenses.size} similar past transaction(s)")
-                
+
                 // Show toast notification to user (only if there are past transactions)
-                withContext(Dispatchers.Main) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
                     Toast.makeText(
                         context,
                         "✓ Also updated ${similarExpenses.size} similar past transaction${if (similarExpenses.size > 1) "s" else ""}",
                         Toast.LENGTH_LONG
                     ).show()
+                    Log.d(TAG, "🍞 Toast shown: Updated ${similarExpenses.size} past transactions")
                 }
-                
+
             } else {
                 Log.d(TAG, "ℹ️ No similar past transactions found to update")
             }
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error updating similar past transactions: ${e.message}", e)
         }

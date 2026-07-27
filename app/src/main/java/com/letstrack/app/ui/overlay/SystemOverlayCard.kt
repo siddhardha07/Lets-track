@@ -52,7 +52,9 @@ fun SystemOverlayCard(
     availableCategories: List<String> = defaultOverlayCategories,
     onConfirm: (category: String, subCategory: String?, notes: String?) -> Unit,
     onSkip: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    showSuccessMessage: Boolean = false,
+    successMessage: String = ""
 ) {
     var selectedCategory by remember(transaction.expenseId) { mutableStateOf(transaction.suggestedCategory) }
     var subCategory by remember(transaction.expenseId) { mutableStateOf(transaction.suggestedSubCategory ?: "") }
@@ -76,12 +78,13 @@ fun SystemOverlayCard(
             .fillMaxWidth()
             .heightIn(max = maxCardHeight)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 16.dp)
-        ) {
+        Box {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
             // Drag handle
             Box(
                 modifier = Modifier
@@ -288,12 +291,12 @@ fun SystemOverlayCard(
                 Spacer(modifier = Modifier.weight(1f))
 
                 Button(
-                    onClick = { 
+                    onClick = {
                         onConfirm(
-                            selectedCategory, 
+                            selectedCategory,
                             subCategory.ifBlank { null },
                             notes.ifBlank { null }
-                        ) 
+                        )
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = OverlayAccent),
                     shape = RoundedCornerShape(14.dp),
@@ -302,6 +305,32 @@ fun SystemOverlayCard(
                     Text("Confirm", fontWeight = FontWeight.SemiBold)
                 }
             }
+        }
+
+        // Success toast overlay
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showSuccessMessage,
+            enter = androidx.compose.animation.slideInVertically() + androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.slideOutVertically() + androidx.compose.animation.fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = OverlayCredit.copy(alpha = 0.9f),
+                shadowElevation = 8.dp,
+                modifier = Modifier.padding(horizontal = 20.dp)
+            ) {
+                Text(
+                    text = successMessage,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                )
+            }
+        }
         }
     }
 }

@@ -116,7 +116,7 @@ class OverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "🎯 OverlayService started, flags=$flags")
-        
+
         // Check if transaction is already pending (from the Flow)
         val pendingTransaction = transactionReviewService.pendingTransaction.value
         if (pendingTransaction != null) {
@@ -125,7 +125,7 @@ class OverlayService : Service() {
         } else {
             Log.d(TAG, "🎯 No transaction yet - waiting for Flow listener")
         }
-        
+
         return START_STICKY
     }
 
@@ -169,19 +169,33 @@ class OverlayService : Service() {
             setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setViewTreeViewModelStoreOwner(lifecycleOwner)
             setContent {
+                val showSuccess = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                val successMsg = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+
                 OverlayTheme {
                     SystemOverlayCard(
                         transaction = transaction,
                         availableCategories = categoryNames.ifEmpty { null }
                             ?: com.letstrack.app.ui.overlay.defaultOverlayCategories,
+                        showSuccessMessage = showSuccess.value,
+                        successMessage = successMsg.value,
                         onConfirm = { category, subCategory, notes ->
                             scope.launch {
+                                // Show success message in overlay
+                                successMsg.value = "✓ Saved: ${transaction.merchantName} → $category"
+                                showSuccess.value = true
+
+                                // For system overlay, only use category to avoid focus issues
+                                // Subcategory and notes can be edited in-app later
                                 transactionReviewService.confirmTransaction(
                                     transaction,
                                     category,
-                                    subCategory,
-                                    notes
+                                    null, // subCategory
+                                    null  // notes
                                 )
+
+                                // Wait for toast to show, then dismiss
+                                kotlinx.coroutines.delay(2500)
                                 transactionReviewService.dismissReview()
                             }
                         },
@@ -210,6 +224,7 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.TYPE_PHONE
             },
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or  // Don't steal focus from current app
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
@@ -221,6 +236,7 @@ class OverlayService : Service() {
         try {
             windowManager?.addView(view, params)
             Log.d(TAG, "✅ Overlay shown successfully over all apps!")
+            // Note: FLAG_NOT_FOCUSABLE stays active - overlay won't steal focus
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to show overlay: ${e.message}", e)
         }
