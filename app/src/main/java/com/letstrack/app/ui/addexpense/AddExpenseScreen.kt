@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
@@ -36,11 +37,75 @@ fun AddExpenseScreen(
     val categories by viewModel.categories.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
     val isEditMode = expenseId != -1L
-    
+    var showNewCategoryDialog by remember { mutableStateOf(false) }
+
     LaunchedEffect(expenseId) {
         if (expenseId != -1L) {
             viewModel.loadExpense(expenseId)
         }
+    }
+
+    // New Category Dialog
+    if (showNewCategoryDialog) {
+        var newCategoryName by remember { mutableStateOf("") }
+        var newCategoryIcon by remember { mutableStateOf("📁") }
+        var newCategoryColor by remember { mutableStateOf("#4CAF50") }
+
+        AlertDialog(
+            onDismissRequest = { showNewCategoryDialog = false },
+            title = { Text("Create New Category") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedTextField(
+                        value = newCategoryName,
+                        onValueChange = { newCategoryName = it },
+                        label = { Text("Category Name") },
+                        placeholder = { Text("e.g., Travel") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    OutlinedTextField(
+                        value = newCategoryIcon,
+                        onValueChange = { if (it.length <= 2) newCategoryIcon = it },
+                        label = { Text("Icon (emoji)") },
+                        placeholder = { Text("🚗") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Text(
+                        text = "This will create a basic category. You can edit it later in Settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (newCategoryName.isNotBlank()) {
+                            viewModel.createNewCategory(
+                                name = newCategoryName.trim(),
+                                icon = newCategoryIcon.ifBlank { "📁" },
+                                color = newCategoryColor
+                            )
+                            showNewCategoryDialog = false
+                        }
+                    }
+                ) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewCategoryDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -127,8 +192,23 @@ fun AddExpenseScreen(
                             onClick = { viewModel.onCategorySelect(category) }
                         )
                     }
+                    
+                    // Add new category button
+                    item {
+                        AddCategoryButton(onClick = { showNewCategoryDialog = true })
+                    }
                 }
             }
+
+            // Subcategory Input
+            OutlinedTextField(
+                value = uiState.subCategory,
+                onValueChange = { viewModel.onSubCategoryChange(it) },
+                label = { Text("Sub-Category") },
+                placeholder = { Text("E.g., Groceries, Takeout (optional)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
 
             // Description Input
             OutlinedTextField(
@@ -195,6 +275,44 @@ fun CategoryItem(
                 text = category.name,
                 style = MaterialTheme.typography.labelSmall,
                 color = if (isSelected) Color.White else Color.Black,
+                maxLines = 2
+            )
+        }
+    }
+}
+
+@Composable
+fun AddCategoryButton(
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add Category",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "New\nCategory",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
                 maxLines = 2
             )
         }

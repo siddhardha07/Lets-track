@@ -9,31 +9,32 @@ data class Expense(
     val amount: Double,
     val categoryId: Long,
     val title: String,
+    val subCategory: String? = null,
     val description: String = "",
     val notes: String = "",
     val date: Long = Instant.now().toEpochMilli(),
     val createdAt: Long = Instant.now().toEpochMilli(),
     val updatedAt: Long = Instant.now().toEpochMilli(),
-    
+
     // Source tracking
     val source: String = "MANUAL",
     val sourceReference: String = "",
-    
+
     // Merchant info
     val merchantName: String = "",
     val merchantId: Long? = null,
     val upiId: String = "",
     val bankReference: String = "",
-    
+
     // AI features
     val aiSuggestedCategoryId: Long? = null,
     val confidenceScore: Double = 0.0,
     val isAiCategorized: Boolean = false,
     val needsReview: Boolean = false,
-    
+
     // Transaction type
     val transactionType: String = "DEBIT",
-    
+
     // Balance after transaction (from bank SMS)
     val balanceAfterTransaction: Double? = null
 ) {

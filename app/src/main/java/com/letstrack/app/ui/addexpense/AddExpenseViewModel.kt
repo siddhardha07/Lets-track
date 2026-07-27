@@ -23,21 +23,21 @@ class AddExpenseViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(AddExpenseUiState())
     val uiState: StateFlow<AddExpenseUiState> = _uiState.asStateFlow()
-    
+
     private var currentExpenseId: Long? = null
 
     init {
         loadCategories()
         seedDefaultCategoriesIfEmpty()
     }
-    
+
     private fun seedDefaultCategoriesIfEmpty() {
         viewModelScope.launch {
             categoryRepository.getAllCategories().collect { existingCategories ->
                 if (existingCategories.isEmpty()) {
                     // Add default categories
                     val defaultCategories = listOf(
-                        Category(name = "Food & Dining", icon = "🍔", color = "#FF5722"),
+                        Category(name = "Food", icon = "🍔", color = "#FF5722"),
                         Category(name = "Shopping", icon = "🛍️", color = "#E91E63"),
                         Category(name = "Transportation", icon = "🚗", color = "#9C27B0"),
                         Category(name = "Entertainment", icon = "🎬", color = "#673AB7"),
@@ -57,7 +57,7 @@ class AddExpenseViewModel @Inject constructor(
             }
         }
     }
-    
+
     fun loadExpense(expenseId: Long) {
         viewModelScope.launch {
             val expense = expenseRepository.getExpenseById(expenseId)
@@ -67,6 +67,7 @@ class AddExpenseViewModel @Inject constructor(
                     state.copy(
                         amount = it.amount.toString(),
                         title = it.title,
+                        subCategory = it.subCategory ?: "",
                         description = it.description,
                         notes = it.notes,
                         dateMillis = it.date,
@@ -98,6 +99,10 @@ class AddExpenseViewModel @Inject constructor(
         _uiState.update { it.copy(title = title) }
     }
 
+    fun onSubCategoryChange(subCategory: String) {
+        _uiState.update { it.copy(subCategory = subCategory) }
+    }
+
     fun onDescriptionChange(description: String) {
         _uiState.update { it.copy(description = description) }
     }
@@ -114,9 +119,27 @@ class AddExpenseViewModel @Inject constructor(
         _uiState.update { it.copy(dateMillis = dateMillis) }
     }
 
+    fun createNewCategory(name: String, icon: String, color: String) {
+        viewModelScope.launch {
+            val newCategory = Category(
+                name = name,
+                icon = icon,
+                color = color
+            )
+            categoryRepository.insertCategory(newCategory)
+            // The new category will automatically appear via the Flow
+            // Select it automatically
+            val allCategories = categoryRepository.getAllCategories().first()
+            val createdCategory = allCategories.find { it.name == name }
+            createdCategory?.let { category ->
+                _uiState.update { it.copy(selectedCategory = category) }
+            }
+        }
+    }
+
     fun saveExpense(onSuccess: () -> Unit) {
         val state = _uiState.value
-        
+
         if (state.amount.isEmpty() || state.title.isEmpty() || state.selectedCategory == null) {
             return
         }
@@ -131,6 +154,7 @@ class AddExpenseViewModel @Inject constructor(
                     amount = amount,
                     categoryId = state.selectedCategory.id,
                     title = state.title,
+                    subCategory = state.subCategory.ifEmpty { null },
                     description = state.description,
                     notes = state.notes,
                     date = state.dateMillis,
@@ -143,6 +167,7 @@ class AddExpenseViewModel @Inject constructor(
                     amount = amount,
                     categoryId = state.selectedCategory.id,
                     title = state.title,
+                    subCategory = state.subCategory.ifEmpty { null },
                     description = state.description,
                     notes = state.notes,
                     date = state.dateMillis,
@@ -158,6 +183,7 @@ class AddExpenseViewModel @Inject constructor(
 data class AddExpenseUiState(
     val amount: String = "",
     val title: String = "",
+    val subCategory: String = "",
     val description: String = "",
     val notes: String = "",
     val selectedCategory: Category? = null,

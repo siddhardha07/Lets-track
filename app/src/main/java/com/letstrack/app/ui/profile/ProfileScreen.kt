@@ -16,13 +16,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.letstrack.app.ui.expenses.ExpensesViewModel
+import com.letstrack.app.ui.TransactionReviewViewModel
+import com.letstrack.app.ui.test.TestOverlayButton
+import com.letstrack.app.ui.test.TestOverlayButtonLowConfidence
 import kotlinx.coroutines.launch
 
 @Composable
 fun ProfileScreen(
     onNavigateToAccounts: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
-    viewModel: ExpensesViewModel = hiltViewModel()
+    onNavigateToCategories: () -> Unit = {},
+    viewModel: ExpensesViewModel = hiltViewModel(),
+    transactionReviewViewModel: TransactionReviewViewModel = hiltViewModel()
 ) {
     Column(
         modifier = Modifier
@@ -31,7 +36,7 @@ fun ProfileScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         // Profile Avatar
         Box(
             modifier = Modifier
@@ -47,26 +52,26 @@ fun ProfileScreen(
                 tint = MaterialTheme.colorScheme.onPrimaryContainer
             )
         }
-        
+
         Spacer(modifier = Modifier.height(24.dp))
-        
+
         // Name
         Text(
             text = "User",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Text(
             text = "user@letstrack.com",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        
+
         Spacer(modifier = Modifier.height(24.dp))
-        
+
         // Profile Options
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -87,11 +92,38 @@ fun ProfileScreen(
                     onClick = onNavigateToSettings
                 )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                ProfileOption(title = "📂 Categories")
+                ProfileOption(
+                    title = "📂 Categories",
+                    onClick = onNavigateToCategories
+                )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 ProfileOption(title = "📤 Export Data")
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 ProfileOption(title = "ℹ️ About")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // TEMPORARY: Test Overlay UI
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "🧪 TEST OVERLAY (Delete after testing)",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                TestOverlayButton(transactionReviewViewModel.service)
+                TestOverlayButtonLowConfidence(transactionReviewViewModel.service)
+                com.letstrack.app.ui.test.TestSystemOverlayButton(transactionReviewViewModel.service)
             }
         }
     }

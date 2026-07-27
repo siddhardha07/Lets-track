@@ -10,8 +10,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.letstrack.app.sms.SmsPermissionHandler
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -22,8 +25,34 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val permissionHandler = remember { SmsPermissionHandler(context) }
-    val hasPermissions by remember { 
-        derivedStateOf { permissionHandler.hasAllPermissions() } 
+    val overlayPermissionHandler = remember { com.letstrack.app.util.OverlayPermissionHandler(context) }
+    val batteryOptimizationHandler = remember { com.letstrack.app.util.BatteryOptimizationHandler(context) }
+
+    // State to trigger recomposition when returning from settings
+    var permissionCheckTrigger by remember { mutableStateOf(0) }
+
+    val hasPermissions by remember {
+        derivedStateOf { permissionCheckTrigger; permissionHandler.hasAllPermissions() }
+    }
+    val hasOverlayPermission by remember {
+        derivedStateOf { permissionCheckTrigger; overlayPermissionHandler.canDrawOverlays() }
+    }
+    val isIgnoringBatteryOptimizations by remember {
+        derivedStateOf { permissionCheckTrigger; batteryOptimizationHandler.isIgnoringBatteryOptimizations() }
+    }
+
+    // Recheck permissions when screen resumes (after returning from system settings)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionCheckTrigger++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     Scaffold(
@@ -56,7 +85,7 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -92,7 +121,7 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        
+
                         if (hasPermissions) {
                             Icon(
                                 imageVector = Icons.Default.CheckCircle,
@@ -101,7 +130,7 @@ fun SettingsScreen(
                             )
                         }
                     }
-                    
+
                     if (!hasPermissions) {
                         Button(
                             onClick = onRequestPermissions,
@@ -110,16 +139,16 @@ fun SettingsScreen(
                             Text("Grant SMS Permissions")
                         }
                     }
-                    
+
                     // Permission details
                     Divider(modifier = Modifier.padding(vertical = 8.dp))
-                    
+
                     PermissionItem(
                         name = "READ_SMS",
                         description = "Read existing SMS messages",
                         granted = permissionHandler.hasReadSmsPermission()
                     )
-                    
+
                     PermissionItem(
                         name = "RECEIVE_SMS",
                         description = "Receive new SMS messages",
@@ -127,16 +156,152 @@ fun SettingsScreen(
                     )
                 }
             }
-            
+
+            // Overlay Permission Section
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (hasOverlayPermission)
+                        MaterialTheme.colorScheme.primaryContainer
+                    else
+                        MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "🎯 Display Over Other Apps",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (hasOverlayPermission)
+                                    "Permission granted"
+                                else
+                                    "Required for transaction review popup",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (hasOverlayPermission) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Granted",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    if (!hasOverlayPermission) {
+                        Button(
+                            onClick = { overlayPermissionHandler.requestOverlayPermission() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Enable Overlay Permission")
+                        }
+                    }
+
+                    Text(
+                        text = "This allows the app to show quick review popups when transactions arrive, so you can categorize them without opening the app.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Battery Optimization Section
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isIgnoringBatteryOptimizations)
+                        MaterialTheme.colorScheme.primaryContainer
+                    else
+                        MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "🔋 Background Reliability",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isIgnoringBatteryOptimizations)
+                                    "Exempt from battery optimization"
+                                else
+                                    "Required so the overlay isn't killed in the background",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        if (isIgnoringBatteryOptimizations) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Granted",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    if (!isIgnoringBatteryOptimizations) {
+                        Button(
+                            onClick = { batteryOptimizationHandler.requestIgnoreBatteryOptimizations() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Disable Battery Optimization")
+                        }
+                    }
+
+                    if (batteryOptimizationHandler.isVivoDevice()) {
+                        OutlinedButton(
+                            onClick = { batteryOptimizationHandler.openOemAutostartSettings() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Open Vivo Autostart Settings")
+                        }
+                        Text(
+                            text = "Vivo devices also require enabling Autostart manually: " +
+                                "Settings → Battery → Background power consumption, and " +
+                                "Settings → More settings → Permission Manager → Autostart.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             // App Info Section
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Text(
                 text = "About",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
-            
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -193,7 +358,7 @@ fun PermissionItem(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        
+
         Text(
             text = if (granted) "✓" else "✗",
             style = MaterialTheme.typography.titleMedium,

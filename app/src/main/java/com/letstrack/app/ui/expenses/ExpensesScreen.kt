@@ -89,7 +89,7 @@ fun ExpensesScreen(
                         onClick = { viewModel.onDateFilterChange(DateFilter.DAY) },
                         label = { Text("Today") }
                     )
-                    
+
                     // Custom date range filter (three dots)
                     var showCustomDialog by remember { mutableStateOf(false) }
                     FilterChip(
@@ -97,7 +97,7 @@ fun ExpensesScreen(
                         onClick = { showCustomDialog = true },
                         label = { Text("⋯") }
                     )
-                    
+
                     if (showCustomDialog) {
                         AlertDialog(
                             onDismissRequest = { showCustomDialog = false },
@@ -111,9 +111,9 @@ fun ExpensesScreen(
                         )
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 // Balance info
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -132,9 +132,9 @@ fun ExpensesScreen(
                         fontWeight = FontWeight.Bold,
                         color = if (totalBalance >= 0) Color(0xFF4CAF50) else Color(0xFFEF5350)
                     )
-                    
+
                     Spacer(modifier = Modifier.height(12.dp))
-                    
+
                     // Credited and Debited Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -157,7 +157,7 @@ fun ExpensesScreen(
                                 color = Color(0xFF4CAF50)
                             )
                         }
-                        
+
                         // Divider
                         Divider(
                             modifier = Modifier
@@ -165,7 +165,7 @@ fun ExpensesScreen(
                                 .height(60.dp),
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f)
                         )
-                        
+
                         // Debited
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally
@@ -218,7 +218,7 @@ fun ExpensesScreen(
                     tint = MaterialTheme.colorScheme.onPrimary
                 )
             }
-            
+
             // More Options Menu
             var showMenu by remember { mutableStateOf(false) }
             Box {
@@ -289,7 +289,7 @@ fun ExpenseItem(
     onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    
+
     Card(
         modifier = Modifier
             .fillMaxWidth(),
@@ -360,11 +360,12 @@ fun ExpenseItem(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     }
                 )
-                if (expense.description.isNotEmpty()) {
+                // Show subcategory if available
+                if (!expense.subCategory.isNullOrEmpty()) {
                     Text(
-                        text = expense.description.take(50) + if (expense.description.length > 50) "..." else "",
+                        text = "→ ${expense.subCategory}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
                 Text(
@@ -394,7 +395,7 @@ fun ExpenseItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            
+
             // Three dots menu
             Box {
                 IconButton(

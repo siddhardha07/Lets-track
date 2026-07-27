@@ -43,7 +43,7 @@ class ExpenseRepositoryImpl @Inject constructor(
     override suspend fun deleteExpenseById(id: Long) {
         expenseDao.deleteExpenseById(id)
     }
-    
+
     override suspend fun deleteAllExpenses() {
         expenseDao.deleteAllExpenses()
     }
@@ -61,6 +61,7 @@ class ExpenseRepositoryImpl @Inject constructor(
         amount = amount,
         categoryId = categoryId,
         title = title,
+        subCategory = subCategory,
         description = description,
         notes = notes,
         date = date,
@@ -85,6 +86,7 @@ class ExpenseRepositoryImpl @Inject constructor(
         amount = amount,
         categoryId = categoryId,
         title = title,
+        subCategory = subCategory,
         description = description,
         notes = notes,
         date = date,

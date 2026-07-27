@@ -1,6 +1,7 @@
 package com.letstrack.app.ui.expenses
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.letstrack.app.data.importer.JsonImporter
@@ -36,10 +37,10 @@ class ExpensesViewModel @Inject constructor(
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
-    
+
     private val _dateFilter = MutableStateFlow(DateFilter.ALL)
     val dateFilter: StateFlow<DateFilter> = _dateFilter.asStateFlow()
-    
+
     private val _customStartDate = MutableStateFlow<Long?>(null)
     private val _customEndDate = MutableStateFlow<Long?>(null)
 
@@ -61,7 +62,7 @@ class ExpensesViewModel @Inject constructor(
         _customEndDate
     ) { expenses, query, filter, customStart, customEnd ->
         var filtered = expenses
-        
+
         // Apply date filter
         filtered = when (filter) {
             DateFilter.ALL -> expenses
@@ -81,7 +82,7 @@ class ExpensesViewModel @Inject constructor(
                 val currentYear = calendar.get(Calendar.YEAR)
                 expenses.filter { expense ->
                     val expenseCal = Calendar.getInstance().apply { timeInMillis = expense.date }
-                    expenseCal.get(Calendar.MONTH) == currentMonth && 
+                    expenseCal.get(Calendar.MONTH) == currentMonth &&
                     expenseCal.get(Calendar.YEAR) == currentYear
                 }
             }
@@ -100,7 +101,7 @@ class ExpensesViewModel @Inject constructor(
                 }
             }
         }
-        
+
         // Apply search filter
         if (query.isEmpty()) {
             filtered
@@ -144,17 +145,17 @@ class ExpensesViewModel @Inject constructor(
                 val totalCredited = expenses
                     .filter { it.transactionType == "CREDIT" }
                     .sumOf { it.amount }
-                    
+
                 _totalDebited.value = totalDebited
                 _totalCredited.value = totalCredited
-                
-                // Use balance from latest SMS transaction if available
+
+                // Use balance from latest SMS transaction
                 val latestBalanceFromSms = expenses
                     .filter { it.source == "SMS" && it.balanceAfterTransaction != null }
                     .maxByOrNull { it.date }
                     ?.balanceAfterTransaction
-                
-                _totalBalance.value = latestBalanceFromSms ?: (totalCredited - totalDebited)
+
+                _totalBalance.value = latestBalanceFromSms ?: 0.0
             }
         }
     }
@@ -162,11 +163,11 @@ class ExpensesViewModel @Inject constructor(
     fun onSearchQueryChange(query: String) {
         _searchQuery.value = query
     }
-    
+
     fun onDateFilterChange(filter: DateFilter) {
         _dateFilter.value = filter
     }
-    
+
     fun onCustomDateRangeSet(startDate: Long, endDate: Long) {
         _customStartDate.value = startDate
         _customEndDate.value = endDate
@@ -182,13 +183,13 @@ class ExpensesViewModel @Inject constructor(
             expenseRepository.deleteExpense(expense)
         }
     }
-    
+
     fun deleteAllExpenses() {
         viewModelScope.launch {
             expenseRepository.deleteAllExpenses()
         }
     }
-    
+
     suspend fun importJsonFile(): String {
         return try {
             // Look for the JSON file in the app's directory
@@ -196,9 +197,9 @@ class ExpensesViewModel @Inject constructor(
             if (!jsonFile.exists()) {
                 return "JSON file not found. Please place 151103XXXX.json in the app's files directory."
             }
-            
+
             val result = jsonImporter.importFromJson(jsonFile.inputStream())
-            
+
             if (result.success > 0) {
                 "✓ Imported ${result.success} transactions successfully"
             } else {

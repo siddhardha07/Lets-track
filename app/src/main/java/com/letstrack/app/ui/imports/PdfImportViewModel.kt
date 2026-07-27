@@ -2,6 +2,7 @@ package com.letstrack.app.ui.imports
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.letstrack.app.data.importer.JsonImporter
@@ -10,11 +11,14 @@ import com.letstrack.app.data.local.entity.ExpenseEntity
 import com.letstrack.app.data.parser.ParsedTransaction
 import com.letstrack.app.data.parser.PdfParser
 import com.letstrack.app.data.parser.PdfParseResult
+import com.letstrack.app.domain.repository.CategoryRepository
+import com.letstrack.app.ml.SmartCategorizer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -25,8 +29,14 @@ import javax.inject.Inject
 class PdfImportViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val jsonImporter: JsonImporter,
-    private val expenseDao: ExpenseDao
+    private val expenseDao: ExpenseDao,
+    private val smartCategorizer: SmartCategorizer,
+    private val categoryRepository: CategoryRepository
 ) : ViewModel() {
+
+    companion object {
+        private const val TAG = "PdfImportViewModel"
+    }
 
     private val pdfParser = PdfParser(context)
 
@@ -43,7 +53,7 @@ class PdfImportViewModel @Inject constructor(
     fun onPasswordChanged(password: String) {
         _uiState.value = _uiState.value.copy(password = password)
     }
-    
+
     fun importJsonFile(uri: Uri) {
         _uiState.value = _uiState.value.copy(
             isProcessing = true,
@@ -86,7 +96,7 @@ class PdfImportViewModel @Inject constructor(
         val password = _uiState.value.password.takeIf { it.isNotEmpty() }
 
         android.util.Log.d("PdfImportViewModel", "startParsing called with URI: $uri")
-        
+
         _uiState.value = _uiState.value.copy(
             isProcessing = true,
             processingStep = "Opening PDF...",
@@ -97,9 +107,9 @@ class PdfImportViewModel @Inject constructor(
             try {
                 android.util.Log.d("PdfImportViewModel", "Calling pdfParser.parsePdf...")
                 val result = pdfParser.parsePdf(uri, password)
-                
+
                 android.util.Log.d("PdfImportViewModel", "Parse result: success=${result.success}, transactions=${result.transactions.size}, error=${result.errorMessage}")
-                
+
                 if (result.success && result.transactions.isNotEmpty()) {
                     _uiState.value = _uiState.value.copy(
                         isProcessing = true,
@@ -109,7 +119,7 @@ class PdfImportViewModel @Inject constructor(
 
                     // Save transactions to database
                     val savedCount = saveTransactionsToDatabase(result.transactions)
-                    
+
                     // Export to JSON
                     _uiState.value = _uiState.value.copy(
                         processingStep = "Exporting to JSON..."
@@ -145,11 +155,11 @@ class PdfImportViewModel @Inject constructor(
             }
         }
     }
-    
+
     private suspend fun saveTransactionsToDatabase(transactions: List<ParsedTransaction>): Int {
         var savedCount = 0
         val dateFormat = SimpleDateFormat("dd MMM yy HH:mm", Locale.ENGLISH)
-        
+
         transactions.forEach { tx ->
             try {
                 val date = try {
@@ -157,30 +167,91 @@ class PdfImportViewModel @Inject constructor(
                 } catch (e: Exception) {
                     System.currentTimeMillis()
                 }
-                
+
+                val transactionType = if (tx.isDebit) "DEBIT" else "CREDIT"
+                val merchantName = tx.merchantName.ifEmpty { "Transaction" }
+
+                // Use AI to categorize the transaction
+                val prediction = try {
+                    smartCategorizer.categorize(
+                        merchantName = merchantName,
+                        amount = tx.amount,
+                        transactionType = transactionType,
+                        message = tx.transactionDetails
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "AI categorization failed for $merchantName: ${e.message}")
+                    null
+                }
+
+                val categoryId = if (prediction != null && prediction.confidence >= 0.6) {
+                    getCategoryIdByName(prediction.category) ?: 1L
+                } else {
+                    1L // Default category if confidence too low
+                }
+
+                val needsReview = prediction == null || prediction.confidence < 0.9
+
+                Log.d(TAG, "PDF Import: $merchantName -> ${prediction?.category} (${(prediction?.confidence?.times(100))?.toInt()}% confidence)")
+
                 val expense = ExpenseEntity(
                     amount = tx.amount,
-                    categoryId = 1, // Default category - user can recategorize later
-                    title = tx.merchantName.ifEmpty { "Transaction" },
+                    categoryId = categoryId,
+                    subCategory = prediction?.subCategory,
+                    title = merchantName,
                     description = tx.transactionDetails,
                     notes = "",
                     date = date,
                     source = "PDF",
                     sourceReference = "Bank Statement Import",
-                    merchantName = tx.merchantName,
+                    merchantName = merchantName,
                     upiId = tx.upiId,
                     bankReference = tx.refChequeNo,
-                    transactionType = if (tx.isDebit) "DEBIT" else "CREDIT"
+                    transactionType = transactionType,
+                    needsReview = needsReview,
+                    isAiCategorized = prediction != null,
+                    confidenceScore = prediction?.confidence ?: 0.0
                 )
-                
+
                 expenseDao.insertExpense(expense)
                 savedCount++
             } catch (e: Exception) {
-                android.util.Log.e("PdfImportViewModel", "Failed to save transaction: ${tx.merchantName}", e)
+                Log.e(TAG, "Failed to save transaction: ${tx.merchantName}", e)
             }
         }
-        
+
         return savedCount
+    }
+
+    private suspend fun getCategoryIdByName(categoryName: String): Long? {
+        return try {
+            val categories = categoryRepository.getAllCategories().first()
+            // Map ML model category names to app category names
+            val mappedName = mapMlCategoryToAppCategory(categoryName)
+            categories.find { it.name.equals(mappedName, ignoreCase = true) }?.id
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting category ID for '$categoryName': ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Map ML model category names to app category names
+     * ML Model: Bills, Entertainment, Food, Groceries, Income, Medical, Shopping, Transport
+     * App: Food, Bills & Utilities, etc.
+     */
+    private fun mapMlCategoryToAppCategory(mlCategory: String): String {
+        return when (mlCategory) {
+            "Food" -> "Food"
+            "Bills" -> "Bills & Utilities"
+            "Medical" -> "Health & Fitness"
+            "Groceries" -> "Food" // Groceries is a subcategory
+            "Income" -> "Other" // Income not in default categories, map to Other
+            "Entertainment" -> "Entertainment"
+            "Shopping" -> "Shopping"
+            "Transport" -> "Transportation"
+            else -> "Other" // Fallback to Other for unknown categories
+        }
     }
 
     fun clearState() {

@@ -5,5 +5,6 @@ data class Category(
     val name: String,
     val icon: String = "💰",
     val color: String = "#4CAF50",
-    val isDefault: Boolean = false
+    val isDefault: Boolean = false,
+    val iconUri: String? = null // For custom uploaded images
 )

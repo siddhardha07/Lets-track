@@ -22,6 +22,7 @@ import androidx.navigation.compose.rememberNavController
 import com.letstrack.app.sms.SmsPermissionHandler
 import com.letstrack.app.ui.accounts.AccountsListScreen
 import com.letstrack.app.ui.addexpense.AddExpenseScreen
+import com.letstrack.app.ui.categories.CategoryManagementScreen
 import com.letstrack.app.ui.expenses.ExpensesScreen
 import com.letstrack.app.ui.home.HomeScreen
 import com.letstrack.app.ui.imports.AddTransactionBottomSheet
@@ -33,7 +34,16 @@ import com.letstrack.app.ui.profile.ProfileScreen
 import com.letstrack.app.ui.settings.SettingsScreen
 import com.letstrack.app.ui.sms.setup.AccountSetupScreen
 import com.letstrack.app.ui.theme.LetsTrackTheme
+import com.letstrack.app.ui.overlay.TransactionReviewOverlay
+import com.letstrack.app.ui.TransactionReviewViewModel
+import com.letstrack.app.service.TransactionReviewService
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+import dagger.hilt.android.lifecycle.HiltViewModel
 
 private const val PREFS_NAME = "app_prefs"
 private const val KEY_FIRST_LAUNCH = "first_launch"
@@ -58,39 +68,48 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainNavigation() {
     val navController = rememberNavController()
+    val transactionReviewService: TransactionReviewService = hiltViewModel<TransactionReviewViewModel>().service
     var showAddBottomSheet by remember { mutableStateOf(false) }
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showFirstLaunchPermissionDialog by remember { mutableStateOf(false) }
-    
+    var showOverlayPermissionDialog by remember { mutableStateOf(false) }
+
     val context = LocalContext.current
     val permissionHandler = remember { SmsPermissionHandler(context) }
-    
+    val overlayPermissionHandler = remember { com.letstrack.app.util.OverlayPermissionHandler(context) }
+
     // Check if first launch
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     val isFirstLaunch = remember { prefs.getBoolean(KEY_FIRST_LAUNCH, true) }
-    
+
     LaunchedEffect(isFirstLaunch) {
         if (isFirstLaunch && !permissionHandler.hasAllPermissions()) {
             showFirstLaunchPermissionDialog = true
         }
     }
-    
+
     // SMS permission launcher
     val smsPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val allGranted = permissions.values.all { it }
-        
+
         // Mark first launch as complete
         prefs.edit {
             putBoolean(KEY_FIRST_LAUNCH, false)
         }
-        
+
         if (!allGranted) {
             showPermissionDialog = true
+        } else {
+            // After SMS permissions, check overlay permission
+            if (overlayPermissionHandler.isOverlayPermissionRequired() &&
+                !overlayPermissionHandler.canDrawOverlays()) {
+                showOverlayPermissionDialog = true
+            }
         }
     }
-    
+
     // Function to request permissions
     val requestPermissions = {
         smsPermissionLauncher.launch(
@@ -101,14 +120,16 @@ fun MainNavigation() {
         )
     }
 
-    Scaffold(
-        bottomBar = {
-            BottomNavigationBar(
-                navController = navController,
-                onAddClick = { showAddBottomSheet = true }
-            )
-        }
-    ) { paddingValues ->
+    // Main UI Container
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            bottomBar = {
+                BottomNavigationBar(
+                    navController = navController,
+                    onAddClick = { showAddBottomSheet = true }
+                )
+            }
+        ) { paddingValues ->
         NavHost(
             navController = navController,
             startDestination = BottomNavItem.Home.route,
@@ -154,7 +175,7 @@ fun MainNavigation() {
                     }
                 )
             }
-            
+
             composable("account_setup") {
                 AccountSetupScreen(
                     onNavigateBack = {
@@ -162,7 +183,7 @@ fun MainNavigation() {
                     }
                 )
             }
-            
+
             composable("accounts_list") {
                 AccountsListScreen(
                     onNavigateBack = {
@@ -176,7 +197,7 @@ fun MainNavigation() {
                     }
                 )
             }
-            
+
             composable("edit_account/{accountId}") { backStackEntry ->
                 val accountId = backStackEntry.arguments?.getString("accountId")?.toLongOrNull() ?: 0L
                 AccountSetupScreen(
@@ -185,13 +206,21 @@ fun MainNavigation() {
                     }
                 )
             }
-            
+
             composable("settings") {
                 SettingsScreen(
                     onNavigateBack = {
                         navController.popBackStack()
                     },
                     onRequestPermissions = requestPermissions
+                )
+            }
+
+            composable("categories") {
+                CategoryManagementScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
                 )
             }
 
@@ -206,6 +235,9 @@ fun MainNavigation() {
                     },
                     onNavigateToSettings = {
                         navController.navigate("settings")
+                    },
+                    onNavigateToCategories = {
+                        navController.navigate("categories")
                     }
                 )
             }
@@ -226,14 +258,14 @@ fun MainNavigation() {
                 }
             )
         }
-        
+
         // SMS Permission Denied Dialog
         if (showPermissionDialog) {
             AlertDialog(
                 onDismissRequest = { showPermissionDialog = false },
                 title = { Text("SMS Permissions Required") },
-                text = { 
-                    Text("To automatically track transactions from bank SMS, please grant READ_SMS and RECEIVE_SMS permissions in Settings.") 
+                text = {
+                    Text("To automatically track transactions from bank SMS, please grant READ_SMS and RECEIVE_SMS permissions in Settings.")
                 },
                 confirmButton = {
                     TextButton(onClick = { showPermissionDialog = false }) {
@@ -242,20 +274,20 @@ fun MainNavigation() {
                 }
             )
         }
-        
+
         // First Launch Permission Dialog
         if (showFirstLaunchPermissionDialog) {
             AlertDialog(
-                onDismissRequest = { 
+                onDismissRequest = {
                     showFirstLaunchPermissionDialog = false
                     prefs.edit { putBoolean(KEY_FIRST_LAUNCH, false) }
                 },
                 title = { Text("📱 Enable SMS Tracking?") },
-                text = { 
-                    Text("Let's Track can automatically import transactions from your bank SMS messages.\n\nWe'll need permission to read SMS. You can change this anytime in Settings.") 
+                text = {
+                    Text("Let's Track can automatically import transactions from your bank SMS messages.\n\nWe'll need permission to read SMS. You can change this anytime in Settings.")
                 },
                 confirmButton = {
-                    Button(onClick = { 
+                    Button(onClick = {
                         showFirstLaunchPermissionDialog = false
                         requestPermissions()
                     }) {
@@ -263,7 +295,7 @@ fun MainNavigation() {
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { 
+                    TextButton(onClick = {
                         showFirstLaunchPermissionDialog = false
                         prefs.edit { putBoolean(KEY_FIRST_LAUNCH, false) }
                     }) {
@@ -272,7 +304,75 @@ fun MainNavigation() {
                 }
             )
         }
-    }
+
+        // Overlay Permission Dialog
+        if (showOverlayPermissionDialog) {
+            AlertDialog(
+                onDismissRequest = { showOverlayPermissionDialog = false },
+                title = { Text("🎯 Enable Transaction Overlay?") },
+                text = {
+                    Text("To show quick review popups when new transactions arrive, we need 'Display over other apps' permission.\n\nThis lets you categorize transactions instantly without opening the app.")
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        showOverlayPermissionDialog = false
+                        overlayPermissionHandler.requestOverlayPermission()
+                    }) {
+                        Text("Enable")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showOverlayPermissionDialog = false
+                    }) {
+                        Text("Skip")
+                    }
+                }
+            )
+        }
+    } // End of Scaffold
+
+    // Global Transaction Review Overlay (AI Categorization) - OUTSIDE Scaffold
+    val pendingTransaction by transactionReviewService.pendingTransaction.collectAsState()
+    val isVisible by transactionReviewService.isOverlayVisible.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+
+    TransactionReviewOverlay(
+        pendingTransaction = pendingTransaction,
+        isVisible = isVisible,
+        onConfirm = { category, subCategory ->
+            pendingTransaction?.let { transaction ->
+                coroutineScope.launch {
+                    transactionReviewService.confirmTransaction(
+                        transaction = transaction,
+                        selectedCategory = category,
+                        selectedSubCategory = subCategory
+                    )
+                }
+            }
+            transactionReviewService.dismissReview()
+        },
+        onReject = {
+            pendingTransaction?.let { transaction ->
+                coroutineScope.launch {
+                    transactionReviewService.rejectTransaction(transaction)
+                }
+            }
+            transactionReviewService.dismissReview()
+        },
+        onReviewLater = {
+            pendingTransaction?.let { transaction ->
+                coroutineScope.launch {
+                    transactionReviewService.rejectTransaction(transaction)
+                }
+            }
+            transactionReviewService.dismissReview()
+        },
+        onDismiss = {
+            transactionReviewService.dismissReview()
+        }
+    )
+    } // End of Box
 }
 
 @Composable

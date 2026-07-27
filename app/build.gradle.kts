@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("kotlin-parcelize")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
 }
@@ -94,6 +95,15 @@ dependencies {
 
     // PdfBox for PDF parsing
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    // OkHttp for Wikipedia API
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Gson for JSON parsing
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // Coil for image loading
+    implementation("io.coil-kt:coil-compose:2.6.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

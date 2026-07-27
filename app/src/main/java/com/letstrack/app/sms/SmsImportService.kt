@@ -102,7 +102,8 @@ class SmsImportService @Inject constructor(
                     val imported = smsProcessor.processSms(
                         sender = sms.sender,
                         message = sms.message,
-                        timestamp = sms.timestamp
+                        timestamp = sms.timestamp,
+                        isBulkImport = true // Don't show overlay during bulk import
                     )
                     
                     if (imported) importedCount++

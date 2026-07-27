@@ -26,7 +26,7 @@ class DatabaseCallback @Inject constructor(
         
         // Insert default categories
         val defaultCategories = listOf(
-            CategoryEntity(name = "Food & Dining", icon = "🍔", color = "#FF6B6B", isDefault = true),
+            CategoryEntity(name = "Food", icon = "🍔", color = "#FF6B6B", isDefault = true),
             CategoryEntity(name = "Transportation", icon = "🚗", color = "#4ECDC4", isDefault = true),
             CategoryEntity(name = "Shopping", icon = "🛍️", color = "#FFE66D", isDefault = true),
             CategoryEntity(name = "Entertainment", icon = "🎬", color = "#A8E6CF", isDefault = true),
