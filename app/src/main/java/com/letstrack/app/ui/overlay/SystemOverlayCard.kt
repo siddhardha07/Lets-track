@@ -16,7 +16,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -24,18 +27,25 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.letstrack.app.domain.model.PendingTransaction
+import com.letstrack.app.ui.theme.contrastingOnColor
+import com.letstrack.app.ui.theme.mixWith
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val OverlaySurface = Color(0xFF1C1C1E)
+private val OverlayBase = Color(0xFF15151C)
 private val OverlaySurfaceVariant = Color(0xFF2C2C2E)
 private val OverlayOnSurface = Color(0xFFF2F2F7)
 private val OverlayOnSurfaceMuted = Color(0xFF9A9AA0)
-private val OverlayAccent = Color(0xFF4C8DFF)
 private val OverlayDebit = Color(0xFFFF6B5E)
 private val OverlayCredit = Color(0xFF4CD97B)
 private val OverlayWarning = Color(0xFFFFB454)
+
+/** Opaque tinted-dark gradient (never translucent -- this card floats directly over whatever
+ * app the user was in, so it can't let arbitrary content bleed through) that reads as "glassy"
+ * from the color shift and the card's own shadow elevation rather than from real transparency. */
+private fun overlayGradient(accentPrimary: Color): Brush =
+    Brush.linearGradient(listOf(OverlayBase, OverlayBase.mixWith(accentPrimary, 0.4f)))
 
 val defaultOverlayCategories = listOf(
     "Food", "Shopping", "Transportation", "Bills & Utilities",
@@ -50,6 +60,7 @@ val defaultOverlayCategories = listOf(
 @Composable
 fun SystemOverlayCard(
     transaction: PendingTransaction,
+    accentPrimary: Color,
     availableCategories: List<String> = defaultOverlayCategories,
     onConfirm: (category: String, subCategory: String?, notes: String?) -> Unit,
     onSkip: () -> Unit,
@@ -58,6 +69,7 @@ fun SystemOverlayCard(
     successMessage: String = "",
     onEditingChanged: (Boolean) -> Unit = {}
 ) {
+    val onAccent = contrastingOnColor(accentPrimary)
     var selectedCategory by remember(transaction.expenseId) { mutableStateOf(transaction.suggestedCategory) }
     var subCategory by remember(transaction.expenseId) { mutableStateOf(transaction.suggestedSubCategory ?: "") }
     var notes by remember(transaction.expenseId) { mutableStateOf("") }
@@ -70,15 +82,18 @@ fun SystemOverlayCard(
     val amountColor = if (isCredit) OverlayCredit else OverlayDebit
     val amountPrefix = if (isCredit) "+" else "-"
 
-    val maxCardHeight = LocalConfiguration.current.screenHeightDp.dp * 0.85f
+    // Capped well under full-screen -- this floats over whatever the user was doing, so it
+    // should read as a lightweight card, not something that takes over their screen.
+    val maxCardHeight = LocalConfiguration.current.screenHeightDp.dp * 0.55f
 
-    Surface(
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        color = OverlaySurface,
-        shadowElevation = 24.dp,
+    val cardShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = maxCardHeight)
+            .shadow(elevation = 24.dp, shape = cardShape)
+            .clip(cardShape)
+            .background(overlayGradient(accentPrimary))
     ) {
         Box {
             Column(
@@ -165,13 +180,15 @@ fun SystemOverlayCard(
                     CategoryChip(
                         label = category,
                         selected = category == selectedCategory,
+                        accentPrimary = accentPrimary,
+                        onAccent = onAccent,
                         onClick = { selectedCategory = category }
                     )
                 }
 
                 // Add new category inline - never leaves the overlay
                 item {
-                    AddCategoryChip(onClick = { isAddingCategory = true })
+                    AddCategoryChip(accentPrimary = accentPrimary, onClick = { isAddingCategory = true })
                 }
             }
 
@@ -187,13 +204,13 @@ fun SystemOverlayCard(
                         placeholder = { Text("New category name", fontSize = 12.sp, color = OverlayOnSurfaceMuted) },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = OverlaySurface,
-                            unfocusedContainerColor = OverlaySurface,
-                            focusedBorderColor = OverlayAccent,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedBorderColor = accentPrimary,
                             unfocusedBorderColor = OverlaySurfaceVariant,
                             focusedTextColor = OverlayOnSurface,
                             unfocusedTextColor = OverlayOnSurface,
-                            cursorColor = OverlayAccent,
+                            cursorColor = accentPrimary,
                             focusedPlaceholderColor = OverlayOnSurfaceMuted.copy(alpha = 0.6f),
                             unfocusedPlaceholderColor = OverlayOnSurfaceMuted.copy(alpha = 0.6f)
                         ),
@@ -237,15 +254,15 @@ fun SystemOverlayCard(
                 placeholder = { Text("e.g., Groceries, Lunch", fontSize = 12.sp, color = OverlayOnSurfaceMuted) },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = OverlaySurface,
-                    unfocusedContainerColor = OverlaySurface,
-                    focusedBorderColor = OverlayAccent,
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedBorderColor = accentPrimary,
                     unfocusedBorderColor = OverlaySurfaceVariant,
-                    focusedLabelColor = OverlayAccent,
+                    focusedLabelColor = accentPrimary,
                     unfocusedLabelColor = OverlayOnSurfaceMuted,
                     focusedTextColor = OverlayOnSurface,
                     unfocusedTextColor = OverlayOnSurface,
-                    cursorColor = OverlayAccent,
+                    cursorColor = accentPrimary,
                     focusedPlaceholderColor = OverlayOnSurfaceMuted.copy(alpha = 0.6f),
                     unfocusedPlaceholderColor = OverlayOnSurfaceMuted.copy(alpha = 0.6f)
                 ),
@@ -265,15 +282,15 @@ fun SystemOverlayCard(
                 placeholder = { Text("Add details...", fontSize = 12.sp, color = OverlayOnSurfaceMuted) },
                 maxLines = 2,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = OverlaySurface,
-                    unfocusedContainerColor = OverlaySurface,
-                    focusedBorderColor = OverlayAccent,
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedBorderColor = accentPrimary,
                     unfocusedBorderColor = OverlaySurfaceVariant,
-                    focusedLabelColor = OverlayAccent,
+                    focusedLabelColor = accentPrimary,
                     unfocusedLabelColor = OverlayOnSurfaceMuted,
                     focusedTextColor = OverlayOnSurface,
                     unfocusedTextColor = OverlayOnSurface,
-                    cursorColor = OverlayAccent,
+                    cursorColor = accentPrimary,
                     focusedPlaceholderColor = OverlayOnSurfaceMuted.copy(alpha = 0.6f),
                     unfocusedPlaceholderColor = OverlayOnSurfaceMuted.copy(alpha = 0.6f)
                 ),
@@ -303,7 +320,7 @@ fun SystemOverlayCard(
                             notes.ifBlank { null }
                         )
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = OverlayAccent),
+                    colors = ButtonDefaults.buttonColors(containerColor = accentPrimary, contentColor = onAccent),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.height(46.dp)
                 ) {
@@ -366,13 +383,15 @@ private fun ConfidenceBadge(confidence: Double) {
 private fun CategoryChip(
     label: String,
     selected: Boolean,
+    accentPrimary: Color,
+    onAccent: Color,
     onClick: () -> Unit
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .background(
-                color = if (selected) OverlayAccent else OverlaySurfaceVariant,
+                color = if (selected) accentPrimary else OverlaySurfaceVariant,
                 shape = RoundedCornerShape(50)
             )
             .clickable { onClick() }
@@ -382,14 +401,14 @@ private fun CategoryChip(
             Icon(
                 imageVector = Icons.Default.Check,
                 contentDescription = null,
-                tint = Color.White,
+                tint = onAccent,
                 modifier = Modifier.size(14.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
         }
         Text(
             text = label,
-            color = if (selected) Color.White else OverlayOnSurface,
+            color = if (selected) onAccent else OverlayOnSurface,
             fontSize = 13.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
         )
@@ -397,7 +416,7 @@ private fun CategoryChip(
 }
 
 @Composable
-private fun AddCategoryChip(onClick: () -> Unit) {
+private fun AddCategoryChip(accentPrimary: Color, onClick: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -411,13 +430,13 @@ private fun AddCategoryChip(onClick: () -> Unit) {
         Icon(
             imageVector = Icons.Default.Add,
             contentDescription = "Add Category",
-            tint = OverlayAccent,
+            tint = accentPrimary,
             modifier = Modifier.size(14.dp)
         )
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = "New",
-            color = OverlayAccent,
+            color = accentPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold
         )

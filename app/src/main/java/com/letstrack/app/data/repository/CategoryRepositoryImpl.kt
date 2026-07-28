@@ -34,12 +34,18 @@ class CategoryRepositoryImpl @Inject constructor(
         categoryDao.deleteCategory(category.toEntity())
     }
 
+    // A custom uploaded image is stored by repurposing the `icon` column to hold a `file://`
+    // path (see CategoryManagementViewModel.saveImageToInternalStorage) -- iconUri needs to be
+    // derived from it here so every consumer of this repository (not just category management
+    // screen, which used to do this mapping locally) renders the actual image instead of the
+    // raw path string.
     private fun CategoryEntity.toDomainModel() = Category(
         id = id,
         name = name,
         icon = icon,
         color = color,
-        isDefault = isDefault
+        isDefault = isDefault,
+        iconUri = icon.takeIf { it.startsWith("file://") }
     )
 
     private fun Category.toEntity() = CategoryEntity(

@@ -55,10 +55,10 @@ class AccountsViewModel @Inject constructor(
         }
     }
     
-    fun startBulkImport() {
+    fun startBulkImport(startDate: Long, endDate: Long) {
         viewModelScope.launch {
             _importProgress.value = SmsImportService.ImportProgress.InProgress(0, 0, "Starting...", "fetching")
-            smsImportService.importSmsFromLastMonths(6)
+            smsImportService.importSmsFromDateRange(startDate, endDate)
         }
     }
     

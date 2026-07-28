@@ -3,9 +3,12 @@ package com.letstrack.app.ui.addexpense
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.letstrack.app.domain.model.Category
+import com.letstrack.app.domain.model.CategoryPrediction
 import com.letstrack.app.domain.model.Expense
+import com.letstrack.app.domain.model.UserCorrection
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
+import com.letstrack.app.ml.SmartCategorizer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -15,7 +18,8 @@ import javax.inject.Inject
 @HiltViewModel
 class AddExpenseViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val smartCategorizer: SmartCategorizer
 ) : ViewModel() {
 
     private val _categories = MutableStateFlow<List<Category>>(emptyList())
@@ -25,6 +29,9 @@ class AddExpenseViewModel @Inject constructor(
     val uiState: StateFlow<AddExpenseUiState> = _uiState.asStateFlow()
 
     private var currentExpenseId: Long? = null
+    // The as-loaded expense, kept so saveExpense() can .copy() from it and preserve fields the
+    // form doesn't expose (merchantName, source tracking, AI metadata) instead of losing them.
+    private var originalExpense: Expense? = null
 
     init {
         loadCategories()
@@ -63,6 +70,7 @@ class AddExpenseViewModel @Inject constructor(
             val expense = expenseRepository.getExpenseById(expenseId)
             expense?.let {
                 currentExpenseId = it.id
+                originalExpense = it
                 _uiState.update { state ->
                     state.copy(
                         amount = it.amount.toString(),
@@ -115,6 +123,10 @@ class AddExpenseViewModel @Inject constructor(
         _uiState.update { it.copy(selectedCategory = category) }
     }
 
+    fun onTransactionTypeChange(transactionType: String) {
+        _uiState.update { it.copy(transactionType = transactionType) }
+    }
+
     fun onDateChange(dateMillis: Long) {
         _uiState.update { it.copy(dateMillis = dateMillis) }
     }
@@ -148,9 +160,12 @@ class AddExpenseViewModel @Inject constructor(
 
         viewModelScope.launch {
             if (currentExpenseId != null) {
-                // Update existing expense
-                val expense = Expense(
-                    id = currentExpenseId!!,
+                // Update existing expense -- .copy() from the originally-loaded expense so
+                // fields the form doesn't expose (merchantName, source tracking, AI metadata)
+                // survive the edit instead of silently resetting to defaults.
+                val original = originalExpense
+                val categoryChanged = original != null && original.categoryId != state.selectedCategory.id
+                val expense = (original ?: Expense(amount = amount, categoryId = state.selectedCategory.id, title = state.title)).copy(
                     amount = amount,
                     categoryId = state.selectedCategory.id,
                     title = state.title,
@@ -158,9 +173,33 @@ class AddExpenseViewModel @Inject constructor(
                     description = state.description,
                     notes = state.notes,
                     date = state.dateMillis,
-                    transactionType = state.transactionType
+                    transactionType = state.transactionType,
+                    needsReview = if (categoryChanged) false else (original?.needsReview ?: false)
                 )
                 expenseRepository.updateExpense(expense)
+
+                // A manual category correction is a real learning signal -- teach the merchant
+                // mapping so a pull-to-refresh on the Expenses tab can propagate it to every
+                // other transaction from the same merchant, not just this one.
+                if (categoryChanged && original != null && original.merchantName.isNotBlank()) {
+                    val originalCategoryName = _categories.value.find { it.id == original.categoryId }?.name ?: "Other"
+                    smartCategorizer.learnFromCorrection(
+                        merchantName = original.merchantName,
+                        amount = expense.amount,
+                        originalPrediction = CategoryPrediction(
+                            category = originalCategoryName,
+                            subCategory = original.subCategory,
+                            confidence = original.confidenceScore,
+                            source = if (original.isAiCategorized) "ml-model" else "manual"
+                        ),
+                        userCorrection = UserCorrection(
+                            merchantName = original.merchantName,
+                            category = state.selectedCategory.name,
+                            subCategory = expense.subCategory,
+                            isCorrect = false
+                        )
+                    )
+                }
             } else {
                 // Insert new expense
                 val expense = Expense(

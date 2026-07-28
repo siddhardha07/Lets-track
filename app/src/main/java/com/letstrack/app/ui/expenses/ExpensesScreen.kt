@@ -1,33 +1,88 @@
 package com.letstrack.app.ui.expenses
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
-import com.letstrack.app.ui.components.DateRange
+import com.letstrack.app.ui.components.AmountText
+import com.letstrack.app.ui.components.AppCard
+import com.letstrack.app.ui.components.CategoryAvatar
+import com.letstrack.app.ui.components.ConfirmationDialog
 import com.letstrack.app.ui.components.DateRangePicker
+import com.letstrack.app.ui.components.EmptyState
+import com.letstrack.app.ui.components.MiniStat
+import com.letstrack.app.ui.components.SegmentedControl
 import com.letstrack.app.ui.home.formatCurrency
-import com.letstrack.app.ui.home.formatDate
-import com.letstrack.app.ui.home.parseColor
+import com.letstrack.app.ui.home.signedAmount
+import com.letstrack.app.ui.theme.expenseColor
+import com.letstrack.app.ui.theme.heroCardBorderColor
+import com.letstrack.app.ui.theme.heroCardBrush
+import com.letstrack.app.ui.theme.incomeColor
+import com.letstrack.app.ui.theme.isDarkTheme
+import com.letstrack.app.ui.theme.listItemCardBrush
+import com.letstrack.app.ui.theme.needsReviewColor
+import com.letstrack.app.ui.theme.ShapeFull
+import com.letstrack.app.ui.theme.ShapeMd
+import com.letstrack.app.ui.theme.ShapeXs
+import com.letstrack.app.ui.theme.Spacing
+import androidx.compose.ui.graphics.Color
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,309 +97,319 @@ fun ExpensesScreen(
     val totalBalance by viewModel.totalBalance.collectAsState()
     val totalCredited by viewModel.totalCredited.collectAsState()
     val totalDebited by viewModel.totalDebited.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        // Balance Summary Card (30% of screen)
-        Card(
+    var showDatePicker by remember { mutableStateOf(false) }
+    var expensePendingDelete by remember { mutableStateOf<Expense?>(null) }
+    var showDeleteAllConfirm by remember { mutableStateOf(false) }
+    var balanceHidden by remember { mutableStateOf(false) }
+
+    val pullState = rememberPullToRefreshState()
+    LaunchedEffect(pullState.isRefreshing) {
+        if (pullState.isRefreshing) viewModel.refresh()
+    }
+    LaunchedEffect(isRefreshing) {
+        if (!isRefreshing && pullState.isRefreshing) pullState.endRefresh()
+    }
+
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { paddingValues ->
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.3f)
-                .padding(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            ),
-            shape = RoundedCornerShape(16.dp)
+                .fillMaxSize()
+                .padding(paddingValues)
         ) {
+            // Hero balance card + search live outside the pull-to-refresh region on purpose --
+            // pulling down is a gesture on the *transaction list*, and a refresh indicator
+            // overlaid on top of the hero card's own controls (segmented filter, calendar/tune
+            // icons) reads as broken rather than as a loading state.
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
+                modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.lg)
             ) {
-                // Filter Chips
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = dateFilter == DateFilter.ALL,
-                        onClick = { viewModel.onDateFilterChange(DateFilter.ALL) },
-                        label = { Text("All") }
-                    )
-                    FilterChip(
-                        selected = dateFilter == DateFilter.YEAR,
-                        onClick = { viewModel.onDateFilterChange(DateFilter.YEAR) },
-                        label = { Text("Year") }
-                    )
-                    FilterChip(
-                        selected = dateFilter == DateFilter.MONTH,
-                        onClick = { viewModel.onDateFilterChange(DateFilter.MONTH) },
-                        label = { Text("Month") }
-                    )
-                    FilterChip(
-                        selected = dateFilter == DateFilter.DAY,
-                        onClick = { viewModel.onDateFilterChange(DateFilter.DAY) },
-                        label = { Text("Today") }
-                    )
-
-                    // Custom date range filter
-                    var showCustomDialog by remember { mutableStateOf(false) }
-                    FilterChip(
-                        selected = dateFilter == DateFilter.CUSTOM,
-                        onClick = { showCustomDialog = true },
-                        label = { Text(if (dateFilter == DateFilter.CUSTOM) "Custom" else "⋯") }
-                    )
-
-                    if (showCustomDialog) {
-                        DateRangePicker(
-                            selectedRange = viewModel.customDateRange.collectAsState().value,
-                            onRangeSelected = { range ->
-                                viewModel.setCustomDateRange(range)
-                                showCustomDialog = false
-                            },
-                            onDismiss = { showCustomDialog = false }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Balance info
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "Current Balance",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = formatCurrency(totalBalance),
-                        style = MaterialTheme.typography.displayMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (totalBalance >= 0) Color(0xFF4CAF50) else Color(0xFFEF5350)
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Credited and Debited Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        // Credited
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "Credited",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = formatCurrency(totalCredited),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF4CAF50)
-                            )
-                        }
-
-                        // Divider
-                        Divider(
-                            modifier = Modifier
-                                .width(1.dp)
-                                .height(60.dp),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f)
-                        )
-
-                        // Debited
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "Debited",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = formatCurrency(totalDebited),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFEF5350)
-                            )
-                        }
-                    }
-                }
+                ExpensesHeroCard(
+                    dateFilter = dateFilter,
+                    onDateFilterChange = { viewModel.onDateFilterChange(it) },
+                    onOpenCustomRange = { showDatePicker = true },
+                    totalBalance = totalBalance,
+                    totalCredited = totalCredited,
+                    totalDebited = totalDebited,
+                    balanceHidden = balanceHidden,
+                    onToggleBalanceHidden = { balanceHidden = !balanceHidden }
+                )
+                SearchAndActionsRow(
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = viewModel::onSearchQueryChange,
+                    onQuickAddClick = onQuickAddClick,
+                    onDeleteAllClick = { showDeleteAllConfirm = true }
+                )
             }
-        }
 
-        // Search Bar with Quick Add Button (10% of screen)
-        Row(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .fillMaxSize()
+                .nestedScroll(pullState.nestedScrollConnection)
         ) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { viewModel.onSearchQueryChange(it) },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Search by name, amount...") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-                singleLine = true,
-                shape = RoundedCornerShape(24.dp)
-            )
-
-            // Quick Add Button
-            FloatingActionButton(
-                onClick = onQuickAddClick,
-                modifier = Modifier.size(48.dp),
-                containerColor = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Quick Add",
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            // More Options Menu
-            var showMenu by remember { mutableStateOf(false) }
-            Box {
-                IconButton(
-                    onClick = { showMenu = true }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "More Options"
-                    )
-                }
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Delete All Transactions") },
-                        onClick = {
-                            showMenu = false
-                            viewModel.deleteAllExpenses()
-                        }
-                    )
-                }
-            }
-        }
-
-        // Expenses List (Remaining 60%)
-        if (expenses.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (searchQuery.isEmpty()) {
-                        "No expenses yet\nAdd your first expense using the + button"
-                    } else {
-                        "No expenses found matching \"$searchQuery\""
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(horizontal = Spacing.lg, vertical = Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.lg)
             ) {
-                items(expenses) { expense ->
-                    val category = viewModel.getCategoryById(expense.categoryId)
-                    ExpenseItem(
-                        expense = expense,
-                        category = category,
-                        onClick = { onExpenseClick(expense) },
-                        onDelete = { viewModel.deleteExpense(expense) }
-                    )
+                if (expenses.isEmpty()) {
+                    item {
+                        AppCard(modifier = Modifier.fillMaxWidth()) {
+                            EmptyState(
+                                title = if (searchQuery.isEmpty()) "No transactions yet" else "No matches for \"$searchQuery\"",
+                                subtitle = if (searchQuery.isEmpty()) {
+                                    "Transactions from SMS or manual entry will show up here."
+                                } else {
+                                    "Try a different search term."
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    val grouped = expenses.sortedByDescending { it.date }.groupBy { dayGroupLabel(it.date) }
+                    grouped.forEach { (label, transactions) ->
+                        item(key = "header_$label") {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        items(transactions, key = { it.id }) { expense ->
+                            TransactionListItem(
+                                expense = expense,
+                                category = viewModel.getCategoryById(expense.categoryId),
+                                onClick = { onExpenseClick(expense) },
+                                onRequestDelete = { expensePendingDelete = expense }
+                            )
+                        }
+                    }
                 }
+            }
+
+            if (isRefreshing) {
+                PullToRefreshContainer(
+                    state = pullState,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+            }
+        }
+        }
+    }
+
+    if (showDatePicker) {
+        DateRangePicker(
+            selectedRange = viewModel.customDateRange.collectAsState().value,
+            onRangeSelected = { range ->
+                viewModel.setCustomDateRange(range)
+                showDatePicker = false
+            },
+            onDismiss = { showDatePicker = false }
+        )
+    }
+
+    expensePendingDelete?.let { expense ->
+        ConfirmationDialog(
+            title = "Delete transaction?",
+            message = "\"${expense.title}\" will be permanently deleted.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                viewModel.deleteExpense(expense)
+                expensePendingDelete = null
+            },
+            onDismiss = { expensePendingDelete = null }
+        )
+    }
+
+    if (showDeleteAllConfirm) {
+        ConfirmationDialog(
+            title = "Delete all transactions?",
+            message = "This permanently deletes every transaction and can't be undone.",
+            confirmLabel = "Delete all",
+            onConfirm = {
+                viewModel.deleteAllExpenses()
+                showDeleteAllConfirm = false
+            },
+            onDismiss = { showDeleteAllConfirm = false }
+        )
+    }
+}
+
+@Composable
+private fun ExpensesHeroCard(
+    dateFilter: DateFilter,
+    onDateFilterChange: (DateFilter) -> Unit,
+    onOpenCustomRange: () -> Unit,
+    totalBalance: Double,
+    totalCredited: Double,
+    totalDebited: Double,
+    balanceHidden: Boolean,
+    onToggleBalanceHidden: () -> Unit
+) {
+    val quickFilters = listOf(DateFilter.ALL, DateFilter.YEAR, DateFilter.MONTH, DateFilter.DAY)
+    val primary = MaterialTheme.colorScheme.primary
+    AppCard(
+        backgroundBrush = heroCardBrush(primary),
+        borderColor = heroCardBorderColor(),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            SegmentedControl(
+                options = quickFilters,
+                selected = if (dateFilter in quickFilters) dateFilter else DateFilter.ALL,
+                onSelect = onDateFilterChange,
+                label = { it.shortLabel() },
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onOpenCustomRange) {
+                Icon(Icons.Filled.CalendarMonth, contentDescription = "Custom date range")
+            }
+        }
+
+        Spacer(Modifier.height(Spacing.lg))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Current balance",
+                style = MaterialTheme.typography.labelLarge,
+                color = LocalContentColor.current.copy(alpha = 0.7f)
+            )
+            IconButton(onClick = onToggleBalanceHidden, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    imageVector = if (balanceHidden) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    contentDescription = if (balanceHidden) "Show balance" else "Hide balance",
+                    tint = LocalContentColor.current.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+        if (balanceHidden) {
+            Text(
+                text = "•••••••",
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold
+            )
+        } else {
+            AmountText(
+                amount = totalBalance,
+                style = MaterialTheme.typography.displaySmall,
+                showIcon = false,
+                positiveColor = primary
+            )
+        }
+
+        Spacer(Modifier.height(Spacing.lg))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xl)) {
+            MiniStat(label = "Credited", value = formatCurrency(totalCredited), color = incomeColor(), icon = Icons.Filled.ArrowUpward)
+            MiniStat(label = "Debited", value = formatCurrency(totalDebited), color = expenseColor(), icon = Icons.Filled.ArrowDownward)
+        }
+    }
+}
+
+private fun DateFilter.shortLabel(): String = when (this) {
+    DateFilter.ALL -> "All"
+    DateFilter.YEAR -> "Year"
+    DateFilter.MONTH -> "Month"
+    DateFilter.DAY -> "Today"
+    DateFilter.CUSTOM -> "Custom"
+}
+
+@Composable
+private fun SearchAndActionsRow(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onQuickAddClick: () -> Unit,
+    onDeleteAllClick: () -> Unit
+) {
+    var showMenu by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = onSearchQueryChange,
+            modifier = Modifier.weight(1f),
+            placeholder = { Text("Search by name, amount...") },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
+            singleLine = true,
+            shape = ShapeFull
+        )
+
+        IconButton(
+            onClick = onQuickAddClick,
+            modifier = Modifier
+                .size(48.dp)
+                .background(MaterialTheme.colorScheme.primary, ShapeFull)
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Add transaction", tint = MaterialTheme.colorScheme.onPrimary)
+        }
+
+        Box {
+            IconButton(onClick = { showMenu = true }) {
+                Icon(Icons.Filled.MoreVert, contentDescription = "More options")
+            }
+            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Delete All Transactions") },
+                    onClick = {
+                        showMenu = false
+                        onDeleteAllClick()
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-fun ExpenseItem(
+private fun TransactionListItem(
     expense: Expense,
     category: Category?,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onRequestDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val primary = MaterialTheme.colorScheme.primary
+    val contentColor = if (isDarkTheme()) Color(0xFFF2F2F7) else Color(0xFF15151F)
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(2.dp),
-        onClick = onClick
-    ) {
+    CompositionLocalProvider(LocalContentColor provides contentColor) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .clip(ShapeMd)
+                .background(listItemCardBrush(primary))
+                .clickable(onClick = onClick)
+                .padding(Spacing.md),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Category Icon or placeholder
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (category != null) {
-                            parseColor(category.color).copy(alpha = 0.2f)
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = category?.icon ?: "?",
-                    style = MaterialTheme.typography.headlineSmall
-                )
-            }
+            CategoryAvatar(category = category, size = 52.dp)
+            Spacer(Modifier.width(Spacing.md))
 
-            Spacer(modifier = Modifier.width(16.dp))
-
-            // Expense Details
             Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     Text(
                         text = expense.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
-                    // Show badge if needs review
                     if (expense.needsReview) {
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.errorContainer
-                        ) {
+                        Surface(shape = ShapeXs, color = MaterialTheme.colorScheme.errorContainer) {
                             Text(
                                 text = "Review",
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
@@ -352,65 +417,34 @@ fun ExpenseItem(
                     }
                 }
                 Text(
-                    text = category?.name ?: "Uncategorized",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (category == null) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                )
-                // Show subcategory if available
-                if (!expense.subCategory.isNullOrEmpty()) {
-                    Text(
-                        text = "→ ${expense.subCategory}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Text(
-                    text = formatDate(expense.date),
+                    text = categoryLine(category, expense.subCategory),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (category == null) needsReviewColor() else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
-            // Amount with transaction type
-            Column(
-                horizontalAlignment = Alignment.End
-            ) {
+            Spacer(Modifier.width(Spacing.sm))
+
+            Column(horizontalAlignment = Alignment.End) {
+                AmountText(amount = expense.signedAmount(), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = formatCurrency(expense.amount),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = if (expense.transactionType == "CREDIT") {
-                        Color(0xFF4CAF50) // Green for credits
-                    } else {
-                        Color(0xFFEF5350) // Red for debits
-                    }
-                )
-                Text(
-                    text = expense.transactionType,
+                    text = formatTime(expense.date),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            // Three dots menu
             Box {
-                IconButton(
-                    onClick = { showMenu = true }
-                ) {
+                IconButton(onClick = { showMenu = true }) {
                     Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "More Options",
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "More options",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false }
-                ) {
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                     DropdownMenuItem(
                         text = { Text("Edit") },
                         onClick = {
@@ -422,11 +456,32 @@ fun ExpenseItem(
                         text = { Text("Delete") },
                         onClick = {
                             showMenu = false
-                            onDelete()
+                            onRequestDelete()
                         }
                     )
                 }
             }
         }
     }
+}
+
+private fun categoryLine(category: Category?, subCategory: String?): String {
+    val categoryName = category?.name ?: "Uncategorized"
+    return if (!subCategory.isNullOrBlank()) "$categoryName · $subCategory" else categoryName
+}
+
+private fun dayGroupLabel(dateMillis: Long): String {
+    val date = LocalDateTime.ofInstant(Instant.ofEpochMilli(dateMillis), ZoneId.systemDefault()).toLocalDate()
+    val today = LocalDate.now()
+    return when {
+        date == today -> "Today"
+        date == today.minusDays(1) -> "Yesterday"
+        date.year == today.year -> date.format(DateTimeFormatter.ofPattern("MMM d"))
+        else -> date.format(DateTimeFormatter.ofPattern("MMM d, yyyy"))
+    }
+}
+
+private fun formatTime(dateMillis: Long): String {
+    val dateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(dateMillis), ZoneId.systemDefault())
+    return dateTime.format(DateTimeFormatter.ofPattern("hh:mm a"))
 }

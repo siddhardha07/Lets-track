@@ -7,7 +7,6 @@ import com.letstrack.app.domain.model.Expense
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
 import com.letstrack.app.ui.components.DateRange
-import com.letstrack.app.ui.home.BalancePoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -35,7 +34,31 @@ data class KeyMetrics(
 )
 
 enum class TimeFilter {
-    TODAY, THIS_WEEK, THIS_MONTH, LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, CUSTOM
+    TODAY, THIS_WEEK, THIS_MONTH, THIS_YEAR, LAST_7_DAYS, LAST_30_DAYS, LAST_90_DAYS, CUSTOM
+}
+
+/** Controls both how [DailySpending] buckets are formed and how they're labeled on the x-axis
+ * of [SpendingTrendChart] -- driven by the actual span of the active filter (in days) rather
+ * than the TimeFilter tag alone, so a CUSTOM calendar range gets the same treatment a preset
+ * filter of the same length would. */
+enum class ChartLabelStyle { WEEKDAY, DAY_OF_MONTH, WEEK_NUMBER, MONTH_NAME }
+
+private fun estimatedSpanDays(filter: TimeFilter, customRange: DateRange?): Int = when (filter) {
+    TimeFilter.TODAY -> 1
+    TimeFilter.THIS_WEEK, TimeFilter.LAST_7_DAYS -> 7
+    TimeFilter.THIS_MONTH, TimeFilter.LAST_30_DAYS -> 30
+    TimeFilter.LAST_90_DAYS -> 90
+    TimeFilter.THIS_YEAR -> 365
+    TimeFilter.CUSTOM -> customRange?.let {
+        ((it.endDate - it.startDate) / (24 * 60 * 60 * 1000L)).toInt().coerceAtLeast(1)
+    } ?: 30
+}
+
+private fun chartGranularityForSpan(spanDays: Int): ChartLabelStyle = when {
+    spanDays <= 7 -> ChartLabelStyle.WEEKDAY
+    spanDays <= 31 -> ChartLabelStyle.DAY_OF_MONTH
+    spanDays <= 60 -> ChartLabelStyle.WEEK_NUMBER
+    else -> ChartLabelStyle.MONTH_NAME
 }
 
 @HiltViewModel
@@ -103,6 +126,16 @@ class HomeViewModel @Inject constructor(
                 }.timeInMillis
                 filtered.filter { it.date >= monthStart }
             }
+            TimeFilter.THIS_YEAR -> {
+                val yearStart = Calendar.getInstance().apply {
+                    set(Calendar.DAY_OF_YEAR, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                filtered.filter { it.date >= yearStart }
+            }
             TimeFilter.LAST_7_DAYS -> {
                 val sevenDaysAgo = Calendar.getInstance().apply {
                     add(Calendar.DAY_OF_YEAR, -7)
@@ -137,8 +170,8 @@ class HomeViewModel @Inject constructor(
         
         // Apply transaction type filter
         when (transType) {
-            "income" -> filtered = filtered.filter { it.amount > 0 }
-            "expense" -> filtered = filtered.filter { it.amount < 0 }
+            "income" -> filtered = filtered.filter { it.transactionType == "CREDIT" }
+            "expense" -> filtered = filtered.filter { it.transactionType == "DEBIT" }
             else -> {}  // Show all
         }
         
@@ -150,9 +183,9 @@ class HomeViewModel @Inject constructor(
         filteredExpenses,
         _categories
     ) { expenses, categories ->
-        val expensesOnly = expenses.filter { it.amount < 0 }
+        val expensesOnly = expenses.filter { it.transactionType == "DEBIT" }
         val totalSpending = expensesOnly.sumOf { kotlin.math.abs(it.amount) }
-        
+
         if (totalSpending == 0.0) {
             emptyList()
         } else {
@@ -171,18 +204,45 @@ class HomeViewModel @Inject constructor(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Daily spending trend
-    val dailySpending: StateFlow<List<DailySpending>> = filteredExpenses.map { expenses ->
-        val expensesOnly = expenses.filter { it.amount < 0 }
-        expensesOnly.groupBy { expense ->
-            Calendar.getInstance().apply {
-                timeInMillis = expense.date
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-        }.map { (date, expenseList) ->
+    // Drives both the chart's bucket width and its x-axis label text (see [chartGranularityForSpan]):
+    // day buckets for short ranges, week buckets for medium ranges, month buckets for long ones --
+    // computed from the actual span so a custom calendar range gets sensible treatment too, not
+    // just the preset filters.
+    val chartLabelStyle: StateFlow<ChartLabelStyle> = combine(_timeFilter, _customDateRange) { filter, customRange ->
+        chartGranularityForSpan(estimatedSpanDays(filter, customRange))
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChartLabelStyle.DAY_OF_MONTH)
+
+    val dailySpending: StateFlow<List<DailySpending>> = combine(filteredExpenses, chartLabelStyle) { expenses, style ->
+        val expensesOnly = expenses.filter { it.transactionType == "DEBIT" }
+        val rangeStart = expensesOnly.minOfOrNull { it.date } ?: 0L
+        val oneWeekMillis = 7L * 24 * 60 * 60 * 1000L
+
+        val bucketKey: (Expense) -> Long = when (style) {
+            ChartLabelStyle.MONTH_NAME -> { expense ->
+                Calendar.getInstance().apply {
+                    timeInMillis = expense.date
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+            }
+            ChartLabelStyle.WEEK_NUMBER -> { expense ->
+                val weekIndex = ((expense.date - rangeStart) / oneWeekMillis).coerceAtLeast(0)
+                rangeStart + weekIndex * oneWeekMillis
+            }
+            else -> { expense ->
+                Calendar.getInstance().apply {
+                    timeInMillis = expense.date
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+            }
+        }
+        expensesOnly.groupBy(bucketKey).map { (date, expenseList) ->
             DailySpending(
                 date = date,
                 amount = expenseList.sumOf { kotlin.math.abs(it.amount) }
@@ -197,8 +257,8 @@ class HomeViewModel @Inject constructor(
         _timeFilter,
         _customDateRange
     ) { filtered, allExpenses, timeFilter, customRange ->
-        val totalIncome = filtered.filter { it.amount > 0 }.sumOf { it.amount }
-        val totalExpenses = filtered.filter { it.amount < 0 }.sumOf { kotlin.math.abs(it.amount) }
+        val totalIncome = filtered.filter { it.transactionType == "CREDIT" }.sumOf { it.amount }
+        val totalExpenses = filtered.filter { it.transactionType == "DEBIT" }.sumOf { kotlin.math.abs(it.amount) }
         
         // Calculate previous period
         val previousPeriodRange = getPreviousPeriodRange(timeFilter, customRange)
@@ -210,8 +270,8 @@ class HomeViewModel @Inject constructor(
             emptyList()
         }
         
-        val prevIncome = previousPeriodExpenses.filter { it.amount > 0 }.sumOf { it.amount }
-        val prevExpenses = previousPeriodExpenses.filter { it.amount < 0 }.sumOf { kotlin.math.abs(it.amount) }
+        val prevIncome = previousPeriodExpenses.filter { it.transactionType == "CREDIT" }.sumOf { it.amount }
+        val prevExpenses = previousPeriodExpenses.filter { it.transactionType == "DEBIT" }.sumOf { kotlin.math.abs(it.amount) }
         val prevBalance = prevIncome - prevExpenses
         val currentBalance = totalIncome - totalExpenses
         
@@ -235,25 +295,10 @@ class HomeViewModel @Inject constructor(
         expenses.sortedByDescending { it.date }.take(10)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Balance over time
-    val balanceOverTime: StateFlow<List<BalancePoint>> = filteredExpenses.map { expenses ->
-        val sortedExpenses = expenses.sortedBy { it.date }
-        var runningBalance = 0.0
-        
-        sortedExpenses.groupBy { expense ->
-            Calendar.getInstance().apply {
-                timeInMillis = expense.date
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-        }.map { (date, expensesOnDate) ->
-            val dayTotal = expensesOnDate.sumOf { it.amount }
-            runningBalance += dayTotal
-            BalancePoint(date = date, balance = runningBalance)
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // Unfiltered count of transactions needing review, for the notification bell badge.
+    val needsReviewCount: StateFlow<Int> = _expenses.map { expenses ->
+        expenses.count { it.needsReview }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     init {
         loadExpenses()
@@ -362,6 +407,24 @@ class HomeViewModel @Inject constructor(
                     set(Calendar.SECOND, 59)
                 }.timeInMillis
                 Pair(lastMonthStart, lastMonthEnd)
+            }
+            TimeFilter.THIS_YEAR -> {
+                val lastYearStart = calendar.apply {
+                    add(Calendar.YEAR, -1)
+                    set(Calendar.DAY_OF_YEAR, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                val lastYearEnd = Calendar.getInstance().apply {
+                    add(Calendar.YEAR, -1)
+                    set(Calendar.DAY_OF_YEAR, getActualMaximum(Calendar.DAY_OF_YEAR))
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                }.timeInMillis
+                Pair(lastYearStart, lastYearEnd)
             }
             TimeFilter.LAST_7_DAYS -> {
                 val fourteenDaysAgo = calendar.apply {

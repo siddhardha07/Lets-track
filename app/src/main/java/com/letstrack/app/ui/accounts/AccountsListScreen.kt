@@ -1,7 +1,16 @@
 package com.letstrack.app.ui.accounts
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -11,13 +20,46 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.letstrack.app.ui.components.AppCard
+import com.letstrack.app.ui.components.ConfirmationDialog
+import com.letstrack.app.ui.components.DateRange
+import com.letstrack.app.ui.components.DateRangePicker
+import com.letstrack.app.ui.components.EmptyState
+import com.letstrack.app.ui.components.PrimaryButton
+import com.letstrack.app.ui.theme.Spacing
+import com.letstrack.app.ui.theme.incomeColor
+import com.letstrack.app.ui.theme.needsReviewColor
+import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,14 +73,13 @@ fun AccountsListScreen(
     val importProgress by viewModel.importProgress.collectAsState()
     val importResult by viewModel.importResult.collectAsState()
     var showImportDialog by remember { mutableStateOf(false) }
+    var showRangePicker by remember { mutableStateOf(false) }
     var showResultDialog by remember { mutableStateOf(false) }
-    var selectedAccountForImport by remember { mutableStateOf<Long?>(null) }
-    
-    // Reset progress when screen is disposed
+    var importRange by remember { mutableStateOf(defaultImportRange()) }
+    var accountPendingDelete by remember { mutableStateOf<Long?>(null) }
+
     DisposableEffect(Unit) {
-        onDispose {
-            viewModel.resetProgress()
-        }
+        onDispose { viewModel.resetProgress() }
     }
 
     Scaffold(
@@ -62,80 +103,60 @@ fun AccountsListScreen(
                 onClick = onNavigateToAddAccount,
                 containerColor = MaterialTheme.colorScheme.primary
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Account")
+                Icon(Icons.Default.Add, contentDescription = "Add Account", tint = MaterialTheme.colorScheme.onPrimary)
             }
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
+        Column(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
             if (accounts.isEmpty()) {
-                // Empty state
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Text(
-                            text = "🏦",
-                            style = MaterialTheme.typography.displayLarge
+                Box(modifier = Modifier.fillMaxSize().padding(Spacing.lg), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        EmptyState(
+                            title = "No bank accounts yet",
+                            subtitle = "Add a bank account to start tracking SMS transactions."
                         )
-                        Text(
-                            text = "No Bank Accounts",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Add a bank account to start tracking SMS transactions",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(onClick = onNavigateToAddAccount) {
-                            Icon(Icons.Default.Add, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Add Account")
-                        }
+                        Spacer(Modifier.height(Spacing.md))
+                        PrimaryButton(text = "Add Account", onClick = onNavigateToAddAccount)
                     }
                 }
             } else {
-                // List of accounts
                 LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(Spacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
-                    items(accounts) { account ->
+                    items(accounts, key = { it.id }) { account ->
                         AccountCard(
                             account = account,
                             onEditClick = { onNavigateToEditAccount(account.id) },
                             onImportClick = {
-                                selectedAccountForImport = account.id
+                                importRange = defaultImportRange()
                                 showImportDialog = true
                             },
-                            onDeleteClick = {
-                                // TODO: Add delete confirmation dialog
-                            }
+                            onDeleteClick = { accountPendingDelete = account.id }
                         )
                     }
                 }
             }
         }
-        
-        // Import confirmation dialog
+
         if (showImportDialog) {
             AlertDialog(
                 onDismissRequest = { showImportDialog = false },
                 title = { Text("Import SMS Transactions?") },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("This will import bank transaction SMS from the last 6 months.")
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        Text("This will import bank transaction SMS from ${importRange.format()}.")
+                        TextButton(onClick = {
+                            // Hide the confirm dialog while the picker is up so there's never
+                            // two stacked dialogs at once -- confusing which "Apply"/"Import"
+                            // belongs to which, and easy to tap the wrong one.
+                            showImportDialog = false
+                            showRangePicker = true
+                        }) {
+                            Text("Change date range")
+                        }
                         Text(
                             text = "• Reads all bank transaction SMS\n• Duplicates will be skipped\n• New transactions added to Expenses\n• Process may take a few minutes",
                             style = MaterialTheme.typography.bodySmall
@@ -145,7 +166,7 @@ fun AccountsListScreen(
                 confirmButton = {
                     Button(onClick = {
                         showImportDialog = false
-                        viewModel.startBulkImport()
+                        viewModel.startBulkImport(importRange.startDate, importRange.endDate)
                     }) {
                         Text("Import")
                     }
@@ -157,8 +178,22 @@ fun AccountsListScreen(
                 }
             )
         }
-        
-        // Import progress dialog - only show when actually importing (not Idle)
+
+        if (showRangePicker) {
+            DateRangePicker(
+                selectedRange = importRange,
+                onRangeSelected = {
+                    importRange = it
+                    showRangePicker = false
+                    showImportDialog = true
+                },
+                onDismiss = {
+                    showRangePicker = false
+                    showImportDialog = true
+                }
+            )
+        }
+
         if (importProgress != null && importProgress !is com.letstrack.app.sms.SmsImportService.ImportProgress.Idle) {
             AlertDialog(
                 onDismissRequest = { },
@@ -166,43 +201,41 @@ fun AccountsListScreen(
                 text = {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
                     ) {
                         when (val progress = importProgress) {
                             is com.letstrack.app.sms.SmsImportService.ImportProgress.InProgress -> {
-                                // Show preparing message if total is 0
                                 if (progress.total == 0 && progress.phase == "fetching") {
                                     CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Spacer(modifier = Modifier.height(Spacing.sm))
                                     Text(progress.message)
                                 } else {
-                                    // Phase indicators
                                     ProgressPhaseRow(
                                         icon = if (progress.phase == "parsing" || progress.phase == "saving") "✓" else "↻",
                                         label = "Reading messages",
                                         isActive = progress.phase == "fetching",
                                         isCompleted = progress.phase in listOf("parsing", "saving")
                                     )
-                                ProgressPhaseRow(
-                                    icon = if (progress.phase == "parsing" || progress.phase == "saving") "✓" else if (progress.phase == "fetching") "⋯" else "↻",
-                                    label = "Parsing transactions",
-                                    isActive = progress.phase == "parsing",
-                                    isCompleted = progress.phase == "saving"
-                                )
-                                ProgressPhaseRow(
-                                    icon = if (progress.phase == "saving") "↻" else "⋯",
-                                    label = "Adding to expenses",
-                                    isActive = progress.phase == "saving",
-                                    isCompleted = false
-                                )
-                                
-                                Spacer(modifier = Modifier.height(8.dp))
-                                LinearProgressIndicator(
-                                    progress = if (progress.total > 0) 
-                                        progress.current.toFloat() / progress.total.toFloat() 
-                                    else 0f,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                    ProgressPhaseRow(
+                                        icon = if (progress.phase == "parsing" || progress.phase == "saving") "✓" else if (progress.phase == "fetching") "⋯" else "↻",
+                                        label = "Parsing transactions",
+                                        isActive = progress.phase == "parsing",
+                                        isCompleted = progress.phase == "saving"
+                                    )
+                                    ProgressPhaseRow(
+                                        icon = if (progress.phase == "saving") "↻" else "⋯",
+                                        label = "Adding to expenses",
+                                        isActive = progress.phase == "saving",
+                                        isCompleted = false
+                                    )
+
+                                    Spacer(modifier = Modifier.height(Spacing.sm))
+                                    LinearProgressIndicator(
+                                        progress = {
+                                            if (progress.total > 0) progress.current.toFloat() / progress.total.toFloat() else 0f
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                     Text(
                                         "${progress.current} / ${progress.total} messages",
                                         style = MaterialTheme.typography.bodySmall,
@@ -211,15 +244,14 @@ fun AccountsListScreen(
                                 }
                             }
                             is com.letstrack.app.sms.SmsImportService.ImportProgress.Error -> {
-                                Text("❌ Error: ${progress.message}")
+                                Text("Error: ${progress.message}", color = MaterialTheme.colorScheme.error)
                             }
                             is com.letstrack.app.sms.SmsImportService.ImportProgress.Completed -> {
-                                Text("✅ Import completed!")
+                                Text("Import completed!", color = incomeColor())
                             }
-                            is com.letstrack.app.sms.SmsImportService.ImportProgress.Idle,
-                            null -> {
+                            is com.letstrack.app.sms.SmsImportService.ImportProgress.Idle, null -> {
                                 CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(Spacing.sm))
                                 Text("Preparing import...")
                             }
                         }
@@ -228,26 +260,25 @@ fun AccountsListScreen(
                 confirmButton = {}
             )
         }
-        
-        // Import result dialog
+
         if (importResult != null) {
             LaunchedEffect(importResult) {
                 showResultDialog = true
             }
         }
-        
+
         if (showResultDialog && importResult != null) {
             AlertDialog(
                 onDismissRequest = {
                     showResultDialog = false
                     viewModel.clearImportResult()
                 },
-                title = { Text("Import Complete!") },
+                title = { Text("Import Complete") },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                         when (val result = importResult) {
                             is com.letstrack.app.sms.SmsImportService.ImportResult.Success -> {
-                                Text("✅ Successfully imported ${result.imported} transactions")
+                                Text("Successfully imported ${result.imported} transactions", color = incomeColor())
                                 Text(
                                     "Processed ${result.processed} SMS messages",
                                     style = MaterialTheme.typography.bodySmall,
@@ -262,11 +293,9 @@ fun AccountsListScreen(
                                 }
                             }
                             is com.letstrack.app.sms.SmsImportService.ImportResult.Failure -> {
-                                Text("❌ Import failed: ${result.error}")
+                                Text("Import failed: ${result.error}", color = MaterialTheme.colorScheme.error)
                             }
-                            null -> {
-                                Text("No result available")
-                            }
+                            null -> Text("No result available")
                         }
                     }
                 },
@@ -281,6 +310,27 @@ fun AccountsListScreen(
             )
         }
     }
+
+    accountPendingDelete?.let { accountId ->
+        ConfirmationDialog(
+            title = "Delete this account?",
+            message = "This removes the account and its SMS-parsing setup. Existing transactions are kept.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                viewModel.deleteAccount(accountId)
+                accountPendingDelete = null
+            },
+            onDismiss = { accountPendingDelete = null }
+        )
+    }
+}
+
+private fun defaultImportRange(): DateRange {
+    val calendar = Calendar.getInstance()
+    val end = calendar.timeInMillis
+    calendar.add(Calendar.MONTH, -6)
+    val start = calendar.timeInMillis
+    return DateRange(start, end)
 }
 
 @Composable
@@ -292,14 +342,14 @@ fun ProgressPhaseRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = icon,
             style = MaterialTheme.typography.titleMedium,
             color = when {
-                isCompleted -> MaterialTheme.colorScheme.primary
+                isCompleted -> incomeColor()
                 isActive -> MaterialTheme.colorScheme.secondary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
@@ -308,7 +358,7 @@ fun ProgressPhaseRow(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = when {
-                isCompleted -> MaterialTheme.colorScheme.primary
+                isCompleted -> incomeColor()
                 isActive -> MaterialTheme.colorScheme.onSurface
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
@@ -325,107 +375,79 @@ fun AccountCard(
     onDeleteClick: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+    AppCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Bank name and nickname
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = account.bankName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (account.accountNickname.isNotBlank()) {
+                    Text(
+                        text = account.accountNickname,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Surface(
+                color = (if (account.isActive) incomeColor() else needsReviewColor()).copy(alpha = 0.16f),
+                shape = MaterialTheme.shapes.small
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = account.bankName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (account.accountNickname.isNotBlank()) {
-                        Text(
-                            text = account.accountNickname,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                
-                // Status badge
-                Surface(
-                    color = if (account.isActive) 
-                        MaterialTheme.colorScheme.primaryContainer 
-                    else 
-                        MaterialTheme.colorScheme.errorContainer,
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    Text(
-                        text = if (account.isActive) "Active" else "Inactive",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (account.isActive)
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        else
-                            MaterialTheme.colorScheme.onErrorContainer
+                Text(
+                    text = if (account.isActive) "Active" else "Inactive",
+                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (account.isActive) incomeColor() else needsReviewColor()
+                )
+            }
+
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "More options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                
-                // Menu button
-                Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(
-                            Icons.Default.MoreVert,
-                            contentDescription = "More options",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Import SMS") },
-                            onClick = {
-                                showMenu = false
-                                onImportClick()
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Default.FileDownload, contentDescription = null)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Edit") },
-                            onClick = {
-                                showMenu = false
-                                onEditClick()
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Default.Edit, contentDescription = null)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Delete") },
-                            onClick = {
-                                showMenu = false
-                                onDeleteClick()
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        )
-                    }
+
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Import SMS") },
+                        onClick = {
+                            showMenu = false
+                            onImportClick()
+                        },
+                        leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Edit") },
+                        onClick = {
+                            showMenu = false
+                            onEditClick()
+                        },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete") },
+                        onClick = {
+                            showMenu = false
+                            onDeleteClick()
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    )
                 }
             }
         }

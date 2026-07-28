@@ -56,6 +56,9 @@ class OverlayService : Service() {
     @Inject
     lateinit var categoryRepository: CategoryRepository
 
+    @Inject
+    lateinit var dataStore: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var windowManager: WindowManager? = null
     private var composeView: ComposeView? = null
@@ -69,10 +72,13 @@ class OverlayService : Service() {
         private const val CHANNEL_ID = "overlay_channel"
         const val EXTRA_TRANSACTION = "extra_transaction"
 
-        // Flags the overlay always has, regardless of edit state.
+        // Flags the overlay always has, regardless of edit state. Deliberately does NOT
+        // include FLAG_LAYOUT_IN_SCREEN: that flag lets the window extend under the status/nav
+        // bar decor, which this bottom-anchored WRAP_CONTENT card never needs, and on some OEM
+        // skins a decor-overlapping alert window forces whatever's fullscreen underneath (e.g. a
+        // WhatsApp call) out of immersive mode -- dropping it removes that whole class of risk.
         private val BASE_FLAGS =
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
     }
 
@@ -116,6 +122,11 @@ class OverlayService : Service() {
             .setContentText("Ready to show transaction review overlay")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            // Fully silent -- this notification exists only to satisfy the foreground-service
+            // requirement and should never make a sound, vibrate, or heads-up over whatever
+            // app (e.g. a WhatsApp call) is currently on screen.
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
             .build()
     }
 
@@ -159,6 +170,17 @@ class OverlayService : Service() {
             emptyList()
         }
 
+        // Match whatever accent color the user picked in Settings so the overlay feels like
+        // part of the same app instead of a hardcoded blue-on-grey card.
+        val accentPrimary = try {
+            val stored = dataStore.data.first()[androidx.datastore.preferences.core.stringPreferencesKey("accent_theme")]
+            (stored?.let { runCatching { com.letstrack.app.ui.theme.AccentTheme.valueOf(it) }.getOrNull() }
+                ?: com.letstrack.app.ui.theme.AccentTheme.GREEN).coreAccent
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read accent theme, defaulting to green: ${e.message}")
+            com.letstrack.app.ui.theme.AccentTheme.GREEN.coreAccent
+        }
+
         hideOverlay()
 
         currentTransactionId = transaction.expenseId
@@ -182,6 +204,7 @@ class OverlayService : Service() {
                 OverlayTheme {
                     SystemOverlayCard(
                         transaction = transaction,
+                        accentPrimary = accentPrimary,
                         availableCategories = categoryNames.ifEmpty { null }
                             ?: com.letstrack.app.ui.overlay.defaultOverlayCategories,
                         showSuccessMessage = showSuccess.value,

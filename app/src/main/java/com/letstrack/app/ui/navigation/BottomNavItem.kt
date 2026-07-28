@@ -11,7 +11,6 @@ sealed class BottomNavItem(
 ) {
     object Home : BottomNavItem("home", Icons.Default.Home, "Home")
     object Expenses : BottomNavItem("expenses", Icons.Default.List, "Expenses")
-    object AddExpense : BottomNavItem("add_expense", Icons.Default.Add, "Add")
     object Placeholder : BottomNavItem("placeholder", Icons.Default.Info, "More")
-    object Profile : BottomNavItem("profile", Icons.Default.Person, "Profile")
+    object Settings : BottomNavItem("settings", Icons.Default.Settings, "Settings")
 }

@@ -3,16 +3,13 @@ package com.letstrack.app.util
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 
 /**
- * Helper class to handle battery optimization exemption.
- * Standard Android Doze whitelisting is requestable from code via a system dialog.
- * OEM-specific background restrictions (Vivo Autostart, etc.) have no official API -
- * we can only best-effort deep-link to the OEM settings screen.
+ * Helper class to handle battery optimization exemption via the standard Android Doze
+ * whitelisting API.
  */
 class BatteryOptimizationHandler(private val context: Context) {
 
@@ -59,44 +56,4 @@ class BatteryOptimizationHandler(private val context: Context) {
         }
     }
 
-    /**
-     * Best-effort deep link into Vivo/iQOO's OriginOS "Autostart" or background power
-     * management screen. There is no official API for this - these component names are
-     * undocumented and can change between OriginOS versions, so this may silently fail
-     * on some devices, in which case the caller should fall back to manual instructions.
-     */
-    fun openOemAutostartSettings(): Boolean {
-        if (!isVivoDevice()) return false
-
-        val candidates = listOf(
-            Intent().setClassName(
-                "com.iqoo.secure",
-                "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"
-            ),
-            Intent().setClassName(
-                "com.iqoo.secure",
-                "com.iqoo.secure.ui.phoneoptimize.BgStartUpManagerNoStart"
-            ),
-            Intent().setClassName(
-                "com.vivo.permissionmanager",
-                "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"
-            )
-        )
-
-        for (intent in candidates) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            try {
-                context.startActivity(intent)
-                return true
-            } catch (e: Exception) {
-                Log.d(TAG, "Autostart screen not available via ${intent.component}: ${e.message}")
-            }
-        }
-        return false
-    }
-
-    fun isVivoDevice(): Boolean {
-        val manufacturer = Build.MANUFACTURER.lowercase()
-        return manufacturer.contains("vivo")
-    }
 }

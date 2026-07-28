@@ -36,6 +36,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.rememberAsyncImagePainter
 import com.letstrack.app.domain.model.Category
+import com.letstrack.app.ui.components.AppCard
+import com.letstrack.app.ui.components.AppCardVariant
+import com.letstrack.app.ui.components.PrimaryButton
+import com.letstrack.app.ui.components.SecondaryButton
+import com.letstrack.app.ui.components.TertiaryButton
+import com.letstrack.app.ui.theme.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,21 +134,15 @@ fun CategoryItem(
     onEdit: () -> Unit,
     onDelete: () -> Unit = {}
 ) {
-    Card(
+    AppCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onToggle() },
-        colors = CardDefaults.cardColors(
-            containerColor = if (isEnabled)
-                MaterialTheme.colorScheme.primaryContainer
-            else
-                MaterialTheme.colorScheme.surfaceVariant
-        )
+        variant = if (isEnabled) AppCardVariant.Tinted else AppCardVariant.Default,
+        tint = MaterialTheme.colorScheme.primaryContainer
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -303,21 +303,17 @@ fun CustomCategoryDialog(
                     }
 
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Button(
+                        PrimaryButton(
+                            text = "Choose Emoji",
                             onClick = { showIconPicker = true },
                             modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Choose Emoji")
-                        }
+                        )
 
-                        OutlinedButton(
+                        SecondaryButton(
+                            text = "Upload Image",
                             onClick = { imagePickerLauncher.launch("image/*") },
                             modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Image, "Upload", modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Upload Image")
-                        }
+                        )
                     }
                 }
 
@@ -342,7 +338,8 @@ fun CustomCategoryDialog(
             }
         },
         confirmButton = {
-            Button(
+            PrimaryButton(
+                text = if (isEditing) "Save" else "Create",
                 onClick = {
                     if (categoryName.isNotBlank()) {
                         onConfirm(
@@ -354,14 +351,10 @@ fun CustomCategoryDialog(
                     }
                 },
                 enabled = categoryName.isNotBlank()
-            ) {
-                Text(if (isEditing) "Save" else "Create")
-            }
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TertiaryButton(text = "Cancel", onClick = onDismiss)
         }
     )
 
@@ -442,9 +435,7 @@ fun IconPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TertiaryButton(text = "Cancel", onClick = onDismiss)
         }
     )
 }

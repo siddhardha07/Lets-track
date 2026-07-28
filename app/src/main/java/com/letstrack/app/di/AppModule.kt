@@ -1,6 +1,10 @@
 package com.letstrack.app.di
 
 import android.app.Application
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.Room
 import com.letstrack.app.data.local.DatabaseCallback
 import com.letstrack.app.data.local.LetsTrackDatabase
@@ -33,6 +37,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Retention(AnnotationRetention.RUNTIME)
 annotation class ApplicationScope
 
+private val Context.themeDataStore: DataStore<Preferences> by preferencesDataStore(name = "theme_prefs")
+
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
@@ -42,6 +48,12 @@ object AppModule {
     @ApplicationScope
     fun provideApplicationScope(): CoroutineScope {
         return CoroutineScope(SupervisorJob())
+    }
+
+    @Provides
+    @Singleton
+    fun provideThemeDataStore(app: Application): DataStore<Preferences> {
+        return app.themeDataStore
     }
 
     @Provides

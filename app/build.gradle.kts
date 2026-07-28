@@ -117,6 +117,9 @@ dependencies {
     // Coil for image loading (for category icons if needed)
     implementation("io.coil-kt:coil-compose:2.6.0")
 
+    // DataStore for persisted user preferences (theme mode)
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
     // Gson for JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")
 

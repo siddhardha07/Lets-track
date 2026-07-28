@@ -101,11 +101,13 @@ fun DateRangePicker(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Update selected date when picker changes
+                // Update selected date when picker changes -- picking a start date auto-advances
+                // to End Date so the user doesn't have to tap the End Date chip themselves.
                 LaunchedEffect(datePickerState.selectedDateMillis) {
                     datePickerState.selectedDateMillis?.let { millis ->
                         if (selectingStart) {
                             startDateMillis = millis
+                            selectingStart = false
                         } else {
                             endDateMillis = millis
                         }

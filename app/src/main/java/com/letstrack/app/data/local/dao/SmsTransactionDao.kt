@@ -22,12 +22,17 @@ interface SmsTransactionDao {
     @Query("SELECT * FROM sms_transactions WHERE accountNumber = :accountLast4 AND timestamp BETWEEN :startTime AND :endTime")
     suspend fun getSmsForAccount(accountLast4: String, startTime: Long, endTime: Long): List<SmsTransactionEntity>
     
+    // Matches on message text within a tolerance window rather than exact timestamp equality --
+    // Telephony.Sms.DATE (read back later when re-scanning the inbox) and SmsMessage.timestampMillis
+    // (captured live off the SMS_RECEIVED broadcast) can legitimately differ by a few seconds for
+    // the same message, which made every re-scan treat already-imported SMS as new and duplicate them.
     @Query("""
-        SELECT * FROM sms_transactions 
-        WHERE message = :message AND timestamp = :timestamp
+        SELECT * FROM sms_transactions
+        WHERE message = :message AND ABS(timestamp - :timestamp) <= :toleranceMs
+        ORDER BY ABS(timestamp - :timestamp) ASC
         LIMIT 1
     """)
-    suspend fun findDuplicateSms(message: String, timestamp: Long): SmsTransactionEntity?
+    suspend fun findDuplicateSms(message: String, timestamp: Long, toleranceMs: Long = 5 * 60 * 1000L): SmsTransactionEntity?
     
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertSms(sms: SmsTransactionEntity): Long
@@ -55,4 +60,7 @@ interface SmsTransactionDao {
     
     @Query("SELECT COUNT(*) FROM sms_transactions WHERE isMatched = 1")
     suspend fun getMatchedCount(): Int
+    
+    @Query("SELECT MAX(timestamp) FROM sms_transactions")
+    suspend fun getLatestSmsTimestamp(): Long?
 }

@@ -11,6 +11,8 @@ import com.letstrack.app.service.TransactionReviewService
 import com.letstrack.app.domain.model.PendingTransaction
 import com.letstrack.app.domain.repository.CategoryRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -33,11 +35,19 @@ class SmsProcessor @Inject constructor(
         private const val CONFIDENCE_THRESHOLD = 60.0 // Below this, transaction needs review
     }
 
+    // The real-time broadcast receiver, a pull-to-refresh catch-up scan, and a manual bulk
+    // import can all call processSms for overlapping date ranges at effectively the same time.
+    // Without serializing them, two callers can both run the "does this SMS already exist?"
+    // check before either has committed its insert, and both proceed to create a duplicate
+    // expense -- this singleton-wide lock makes the check-then-insert atomic across all callers.
+    private val processingMutex = Mutex()
+
     /**
      * Process an incoming SMS message
      * @param isBulkImport If true, skip overlay (used during bulk import)
      */
-    suspend fun processSms(sender: String, message: String, timestamp: Long, isBulkImport: Boolean = false): Boolean {
+    suspend fun processSms(sender: String, message: String, timestamp: Long, isBulkImport: Boolean = false): Boolean =
+        processingMutex.withLock {
         try {
             Log.d(TAG, "Processing SMS from $sender at $timestamp")
 
@@ -111,7 +121,7 @@ class SmsProcessor @Inject constructor(
             Log.e(TAG, "Error processing SMS: ${e.message}", e)
             return false
         }
-    }
+        }
 
     /**
      * Create expense with AI categorization

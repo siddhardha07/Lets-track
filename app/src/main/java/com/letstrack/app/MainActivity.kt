@@ -7,10 +7,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
@@ -25,15 +34,19 @@ import com.letstrack.app.ui.addexpense.AddExpenseScreen
 import com.letstrack.app.ui.categories.CategoryManagementScreen
 import com.letstrack.app.ui.expenses.ExpensesScreen
 import com.letstrack.app.ui.home.HomeScreen
-import com.letstrack.app.ui.imports.AddTransactionBottomSheet
+import com.letstrack.app.ui.imports.AddActionMenu
 import com.letstrack.app.ui.imports.CsvImportScreen
 import com.letstrack.app.ui.imports.PdfImportScreen
 import com.letstrack.app.ui.navigation.BottomNavItem
+import com.letstrack.app.ui.notifications.NotificationsScreen
 import com.letstrack.app.ui.placeholder.PlaceholderScreen
-import com.letstrack.app.ui.profile.ProfileScreen
 import com.letstrack.app.ui.settings.SettingsScreen
 import com.letstrack.app.ui.sms.setup.AccountSetupScreen
+import com.letstrack.app.ui.theme.AccentTheme
 import com.letstrack.app.ui.theme.LetsTrackTheme
+import com.letstrack.app.ui.theme.ThemeMode
+import com.letstrack.app.ui.theme.accentGradient
+import com.letstrack.app.ui.theme.ThemeViewModel
 import com.letstrack.app.ui.overlay.TransactionReviewOverlay
 import com.letstrack.app.ui.TransactionReviewViewModel
 import com.letstrack.app.service.TransactionReviewService
@@ -53,12 +66,25 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            LetsTrackTheme {
+            val themeViewModel: ThemeViewModel = hiltViewModel()
+            val themeMode by themeViewModel.themeMode.collectAsState()
+            val accentTheme by themeViewModel.accentTheme.collectAsState()
+            val darkTheme = when (themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            LetsTrackTheme(darkTheme = darkTheme, accentTheme = accentTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainNavigation()
+                    MainNavigation(
+                        themeMode = themeMode,
+                        onThemeModeChange = themeViewModel::setThemeMode,
+                        accentTheme = accentTheme,
+                        onAccentThemeChange = themeViewModel::setAccentTheme
+                    )
                 }
             }
         }
@@ -66,7 +92,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainNavigation() {
+fun MainNavigation(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    accentTheme: AccentTheme,
+    onAccentThemeChange: (AccentTheme) -> Unit
+) {
     val navController = rememberNavController()
     val transactionReviewService: TransactionReviewService = hiltViewModel<TransactionReviewViewModel>().service
     var showAddBottomSheet by remember { mutableStateOf(false) }
@@ -136,7 +167,23 @@ fun MainNavigation() {
             modifier = Modifier.padding(paddingValues)
         ) {
             composable(BottomNavItem.Home.route) {
-                HomeScreen()
+                HomeScreen(
+                    onSeeAllTransactions = {
+                        navController.navigate(BottomNavItem.Expenses.route)
+                    },
+                    onOpenNotifications = {
+                        navController.navigate("notifications")
+                    }
+                )
+            }
+
+            composable("notifications") {
+                NotificationsScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onExpenseClick = { expense ->
+                        navController.navigate("manual_add/${expense.id}")
+                    }
+                )
             }
 
             composable(BottomNavItem.Expenses.route) {
@@ -207,12 +254,19 @@ fun MainNavigation() {
                 )
             }
 
-            composable("settings") {
+            composable(BottomNavItem.Settings.route) {
                 SettingsScreen(
-                    onNavigateBack = {
-                        navController.popBackStack()
+                    onRequestPermissions = requestPermissions,
+                    onNavigateToAccounts = {
+                        navController.navigate("accounts_list")
                     },
-                    onRequestPermissions = requestPermissions
+                    onNavigateToCategories = {
+                        navController.navigate("categories")
+                    },
+                    themeMode = themeMode,
+                    onThemeModeChange = onThemeModeChange,
+                    accentTheme = accentTheme,
+                    onAccentThemeChange = onAccentThemeChange
                 )
             }
 
@@ -227,36 +281,6 @@ fun MainNavigation() {
             composable(BottomNavItem.Placeholder.route) {
                 PlaceholderScreen()
             }
-
-            composable(BottomNavItem.Profile.route) {
-                ProfileScreen(
-                    onNavigateToAccounts = {
-                        navController.navigate("accounts_list")
-                    },
-                    onNavigateToSettings = {
-                        navController.navigate("settings")
-                    },
-                    onNavigateToCategories = {
-                        navController.navigate("categories")
-                    }
-                )
-            }
-        }
-
-        // Bottom Sheet for Add Options
-        if (showAddBottomSheet) {
-            AddTransactionBottomSheet(
-                onDismiss = { showAddBottomSheet = false },
-                onManualClick = {
-                    navController.navigate("manual_add/-1")
-                },
-                onPdfClick = {
-                    navController.navigate("pdf_import")
-                },
-                onCsvClick = {
-                    navController.navigate("csv_import")
-                }
-            )
         }
 
         // SMS Permission Denied Dialog
@@ -332,6 +356,26 @@ fun MainNavigation() {
         }
     } // End of Scaffold
 
+    // Add Action Menu -- drawn after (on top of) the Scaffold/custom bottom bar, so the scrim
+    // covers the whole screen instead of sitting behind the floating nav bar.
+    if (showAddBottomSheet) {
+        AddActionMenu(
+            onDismiss = { showAddBottomSheet = false },
+            onManualClick = {
+                showAddBottomSheet = false
+                navController.navigate("manual_add/-1")
+            },
+            onPdfClick = {
+                showAddBottomSheet = false
+                navController.navigate("pdf_import")
+            },
+            onCsvClick = {
+                showAddBottomSheet = false
+                navController.navigate("csv_import")
+            }
+        )
+    }
+
     // Global Transaction Review Overlay (AI Categorization) - OUTSIDE Scaffold
     val pendingTransaction by transactionReviewService.pendingTransaction.collectAsState()
     val isVisible by transactionReviewService.isOverlayVisible.collectAsState()
@@ -383,53 +427,88 @@ fun BottomNavigationBar(
     val items = listOf(
         BottomNavItem.Home,
         BottomNavItem.Expenses,
-        BottomNavItem.AddExpense,
         BottomNavItem.Placeholder,
-        BottomNavItem.Profile
+        BottomNavItem.Settings
     )
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 8.dp
-    ) {
-        items.forEach { item ->
-            if (item == BottomNavItem.AddExpense) {
-                // Special handling for Add button
-                NavigationBarItem(
-                    icon = {
-                        Icon(
-                            imageVector = item.icon,
-                            contentDescription = item.title
-                        )
-                    },
-                    label = { Text(item.title) },
-                    selected = false,
-                    onClick = onAddClick
-                )
-            } else {
-                NavigationBarItem(
-                    icon = {
-                        Icon(
-                            imageVector = item.icon,
-                            contentDescription = item.title
-                        )
-                    },
-                    label = { Text(item.title) },
-                    selected = currentRoute == item.route,
-                    onClick = {
-                        navController.navigate(item.route) {
-                            popUpTo(navController.graph.startDestinationId) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
-                )
+    fun navigate(item: BottomNavItem) {
+        navController.navigate(item.route) {
+            popUpTo(navController.graph.startDestinationId) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(72.dp),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items.take(2).forEach { item ->
+                    BottomNavButton(
+                        item = item,
+                        selected = currentRoute == item.route,
+                        modifier = Modifier.weight(1f),
+                        onClick = { navigate(item) }
+                    )
+                }
+                Spacer(modifier = Modifier.width(72.dp))
+                items.drop(2).forEach { item ->
+                    BottomNavButton(
+                        item = item,
+                        selected = currentRoute == item.route,
+                        modifier = Modifier.weight(1f),
+                        onClick = { navigate(item) }
+                    )
+                }
             }
         }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = (-28).dp)
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(accentGradient(MaterialTheme.colorScheme.primary))
+                .clickable(onClick = onAddClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add transaction",
+                tint = MaterialTheme.colorScheme.onPrimary
+            )
+        }
+    }
+}
+
+@Composable
+private fun BottomNavButton(
+    item: BottomNavItem,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(imageVector = item.icon, contentDescription = item.title, tint = color)
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(text = item.title, style = MaterialTheme.typography.labelSmall, color = color)
     }
 }

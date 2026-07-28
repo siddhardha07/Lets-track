@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.Telephony
 import android.util.Log
+import com.letstrack.app.data.local.dao.SmsTransactionDao
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,7 +20,8 @@ import javax.inject.Singleton
 @Singleton
 class SmsImportService @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val smsProcessor: SmsProcessor
+    private val smsProcessor: SmsProcessor,
+    private val smsTransactionDao: SmsTransactionDao
 ) {
     
     companion object {
@@ -52,11 +54,22 @@ class SmsImportService @Inject constructor(
     /**
      * Import SMS from last N months
      */
-    suspend fun importSmsFromLastMonths(months: Int = 6): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun importSmsFromLastMonths(months: Int = 6): ImportResult {
+        val calendar = Calendar.getInstance()
+        val endTime = calendar.timeInMillis
+        calendar.add(Calendar.MONTH, -months)
+        val startTime = calendar.timeInMillis
+        return importSmsFromDateRange(startTime, endTime)
+    }
+
+    /**
+     * Import SMS between two explicit timestamps (e.g. from a user-picked date range).
+     */
+    suspend fun importSmsFromDateRange(startTime: Long, endTime: Long): ImportResult = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Starting bulk SMS import for last $months months")
+            Log.d(TAG, "Starting bulk SMS import from $startTime to $endTime")
             _importProgress.value = ImportProgress.InProgress(0, 0, "Checking SMS permissions...", "fetching")
-            
+
             // Check SMS permission
             if (!hasReadSmsPermission()) {
                 val errorMsg = "SMS read permission not granted"
@@ -64,17 +77,11 @@ class SmsImportService @Inject constructor(
                 _importProgress.value = ImportProgress.Error(errorMsg)
                 return@withContext ImportResult.Failure(errorMsg)
             }
-            
+
             _importProgress.value = ImportProgress.InProgress(0, 0, "Preparing import...", "fetching")
-            
-            // Calculate date range
-            val calendar = Calendar.getInstance()
-            val endTime = calendar.timeInMillis
-            calendar.add(Calendar.MONTH, -months)
-            val startTime = calendar.timeInMillis
-            
+
             Log.d(TAG, "Date range: ${startTime} to ${endTime}")
-            
+
             // Query SMS inbox
             _importProgress.value = ImportProgress.InProgress(0, 0, "Reading messages...", "fetching")
             val smsMessages = querySmsInbox(startTime, endTime)
@@ -224,6 +231,19 @@ class SmsImportService @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Error checking SMS permission: ${e.message}", e)
             false
+        }
+    }
+    
+    /**
+     * Get the timestamp of the last processed SMS message.
+     * Used by pull-to-refresh to only scan for NEW messages since last import.
+     */
+    suspend fun getLastProcessedSmsTimestamp(): Long? {
+        return try {
+            smsTransactionDao.getLatestSmsTimestamp()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting latest SMS timestamp: ${e.message}", e)
+            null
         }
     }
     

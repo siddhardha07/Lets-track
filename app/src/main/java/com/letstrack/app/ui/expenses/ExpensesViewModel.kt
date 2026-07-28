@@ -9,9 +9,13 @@ import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
+import com.letstrack.app.ml.SmartCategorizer
+import com.letstrack.app.sms.SmsImportService
+import com.letstrack.app.sms.SmsPermissionHandler
 import com.letstrack.app.ui.components.DateRange
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
@@ -27,6 +31,9 @@ class ExpensesViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val jsonImporter: JsonImporter,
+    private val smartCategorizer: SmartCategorizer,
+    private val smsImportService: SmsImportService,
+    private val smsPermissionHandler: SmsPermissionHandler,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -60,6 +67,9 @@ class ExpensesViewModel @Inject constructor(
 
     private val _totalDebited = MutableStateFlow(0.0)
     val totalDebited: StateFlow<Double> = _totalDebited.asStateFlow()
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     // Filtered expenses based on search and date
     val filteredExpenses: StateFlow<List<Expense>> = combine(
@@ -196,6 +206,107 @@ class ExpensesViewModel @Inject constructor(
     fun deleteAllExpenses() {
         viewModelScope.launch {
             expenseRepository.deleteAllExpenses()
+        }
+    }
+
+    /**
+     * Pull-to-refresh does three things: (1) catches up on any bank SMS the broadcast
+     * receiver missed (app killed, permission granted late, etc.) by re-scanning a recent
+     * window -- [SmsImportService] already dedupes by message+timestamp so re-scanning
+     * overlap is harmless; (2) re-syncs every transaction's *category* to whatever its
+     * merchant is currently learned as, since a correction made on one transaction (via edit
+     * or the review overlay) should retroactively apply to every other transaction from that
+     * same merchant -- but only the category, never subCategory, since that's per-transaction
+     * detail (e.g. "Lunch" vs "Dinner" under Food) that a blind merchant-level sync shouldn't
+     * overwrite.
+     */
+    fun refresh() {
+        // Atomic check-and-set -- a plain "if already refreshing, return" read-then-write can
+        // let two near-simultaneous calls both see "not refreshing yet" and both launch a scan.
+        if (!_isRefreshing.compareAndSet(expect = false, update = true)) return
+        viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            try {
+                catchUpOnMissedSms()
+                resyncMerchantCategories()
+            } finally {
+                val elapsed = System.currentTimeMillis() - startedAt
+                val minimumVisibleDuration = 500L
+                if (elapsed < minimumVisibleDuration) delay(minimumVisibleDuration - elapsed)
+                _isRefreshing.value = false
+            }
+        }
+    }
+
+    private suspend fun catchUpOnMissedSms() {
+        if (!smsPermissionHandler.hasReadSmsPermission()) return
+        try {
+            val now = System.currentTimeMillis()
+            
+            // Get the timestamp of the last processed SMS message
+            val lastSmsTimestamp = smsImportService.getLastProcessedSmsTimestamp()
+            
+            val startTime = if (lastSmsTimestamp != null) {
+                // Only scan for NEW messages since the last one we processed
+                // Add 1ms to avoid re-processing the same message
+                lastSmsTimestamp + 1
+            } else {
+                // First time: scan last 1 minute as fallback
+                val catchUpWindow = 60 * 1000L // 1 minute
+                now - catchUpWindow
+            }
+            
+            // Only import if there's actually a time window to scan
+            if (startTime < now) {
+                Log.d("ExpensesViewModel", "Scanning for SMS from ${java.util.Date(startTime)} to ${java.util.Date(now)}")
+                smsImportService.importSmsFromDateRange(startTime, now)
+            } else {
+                Log.d("ExpensesViewModel", "No new SMS to scan - already up to date")
+            }
+        } catch (e: Exception) {
+            Log.e("ExpensesViewModel", "SMS catch-up scan failed: ${e.message}", e)
+        }
+    }
+
+    private suspend fun resyncMerchantCategories() {
+        val categories = _categories.value
+        val byMerchant = _expenses.value
+            .filter { it.merchantName.isNotBlank() }
+            .groupBy { it.merchantName.uppercase().trim() }
+
+        for (group in byMerchant.values) {
+            try {
+                val sample = group.first()
+                val prediction = smartCategorizer.categorize(
+                    merchantName = sample.merchantName,
+                    amount = sample.amount,
+                    transactionType = sample.transactionType,
+                    message = ""
+                )
+                if (prediction.category == "Other" || prediction.confidence <= 0.0) continue
+
+                val newCategory = categories.find { it.name == prediction.category } ?: continue
+
+                for (expense in group) {
+                    val alreadyResolved = expense.categoryId == newCategory.id && !expense.needsReview
+                    if (alreadyResolved) continue
+
+                    expenseRepository.updateExpense(
+                        expense.copy(
+                            categoryId = newCategory.id,
+                            needsReview = false,
+                            isAiCategorized = true,
+                            confidenceScore = prediction.confidence
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                // One merchant failing to resync shouldn't abort the rest, and definitely
+                // shouldn't leave the pull-to-refresh spinner stuck on -- refresh()'s own
+                // try/finally already guarantees isRefreshing resets, but there's no reason
+                // to skip every other merchant just because one had bad data.
+                Log.e("ExpensesViewModel", "Merchant resync failed for a group: ${e.message}", e)
+            }
         }
     }
 
