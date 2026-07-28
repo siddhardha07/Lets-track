@@ -26,6 +26,13 @@ enum class DateFilter {
     ALL, YEAR, MONTH, DAY, CUSTOM
 }
 
+sealed class MerchantLearningStatus {
+    object Idle : MerchantLearningStatus()
+    data class Learning(val merchantName: String) : MerchantLearningStatus()
+    data class Applied(val merchantName: String, val count: Int) : MerchantLearningStatus()
+    data class Error(val message: String) : MerchantLearningStatus()
+}
+
 @HiltViewModel
 class ExpensesViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
@@ -34,6 +41,7 @@ class ExpensesViewModel @Inject constructor(
     private val smartCategorizer: SmartCategorizer,
     private val smsImportService: SmsImportService,
     private val smsPermissionHandler: SmsPermissionHandler,
+    private val merchantCategoryDao: com.letstrack.app.data.local.dao.MerchantCategoryDao,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -51,7 +59,7 @@ class ExpensesViewModel @Inject constructor(
 
     private val _customStartDate = MutableStateFlow<Long?>(null)
     private val _customEndDate = MutableStateFlow<Long?>(null)
-    
+
     val customDateRange: StateFlow<DateRange?> = combine(
         _customStartDate,
         _customEndDate
@@ -70,6 +78,9 @@ class ExpensesViewModel @Inject constructor(
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+    
+    private val _merchantLearningStatus = MutableStateFlow<MerchantLearningStatus>(MerchantLearningStatus.Idle)
+    val merchantLearningStatus: StateFlow<MerchantLearningStatus> = _merchantLearningStatus.asStateFlow()
 
     // Filtered expenses based on search and date
     val filteredExpenses: StateFlow<List<Expense>> = combine(
@@ -185,7 +196,7 @@ class ExpensesViewModel @Inject constructor(
     fun onDateFilterChange(filter: DateFilter) {
         _dateFilter.value = filter
     }
-    
+
     fun setCustomDateRange(range: DateRange) {
         _customStartDate.value = range.startDate
         _customEndDate.value = range.endDate
@@ -210,15 +221,8 @@ class ExpensesViewModel @Inject constructor(
     }
 
     /**
-     * Pull-to-refresh does three things: (1) catches up on any bank SMS the broadcast
-     * receiver missed (app killed, permission granted late, etc.) by re-scanning a recent
-     * window -- [SmsImportService] already dedupes by message+timestamp so re-scanning
-     * overlap is harmless; (2) re-syncs every transaction's *category* to whatever its
-     * merchant is currently learned as, since a correction made on one transaction (via edit
-     * or the review overlay) should retroactively apply to every other transaction from that
-     * same merchant -- but only the category, never subCategory, since that's per-transaction
-     * detail (e.g. "Lunch" vs "Dinner" under Food) that a blind merchant-level sync shouldn't
-     * overwrite.
+     * Pull-to-refresh only catches up on missed SMS messages.
+     * Merchant learning & category updates happen when user manually edits a transaction.
      */
     fun refresh() {
         // Atomic check-and-set -- a plain "if already refreshing, return" read-then-write can
@@ -227,8 +231,7 @@ class ExpensesViewModel @Inject constructor(
         viewModelScope.launch {
             val startedAt = System.currentTimeMillis()
             try {
-                catchUpOnMissedSms()
-                resyncMerchantCategories()
+                catchUpOnMissedSms()  // ONLY fetch new SMS messages
             } finally {
                 val elapsed = System.currentTimeMillis() - startedAt
                 val minimumVisibleDuration = 500L
@@ -242,10 +245,10 @@ class ExpensesViewModel @Inject constructor(
         if (!smsPermissionHandler.hasReadSmsPermission()) return
         try {
             val now = System.currentTimeMillis()
-            
+
             // Get the timestamp of the last processed SMS message
             val lastSmsTimestamp = smsImportService.getLastProcessedSmsTimestamp()
-            
+
             val startTime = if (lastSmsTimestamp != null) {
                 // Only scan for NEW messages since the last one we processed
                 // Add 1ms to avoid re-processing the same message
@@ -255,7 +258,7 @@ class ExpensesViewModel @Inject constructor(
                 val catchUpWindow = 60 * 1000L // 1 minute
                 now - catchUpWindow
             }
-            
+
             // Only import if there's actually a time window to scan
             if (startTime < now) {
                 Log.d("ExpensesViewModel", "Scanning for SMS from ${java.util.Date(startTime)} to ${java.util.Date(now)}")
@@ -268,45 +271,88 @@ class ExpensesViewModel @Inject constructor(
         }
     }
 
-    private suspend fun resyncMerchantCategories() {
-        val categories = _categories.value
-        val byMerchant = _expenses.value
-            .filter { it.merchantName.isNotBlank() }
-            .groupBy { it.merchantName.uppercase().trim() }
-
-        for (group in byMerchant.values) {
+    /**
+     * Learn from user's category choice and apply it to all transactions from the same merchant.
+     * Called when user manually edits a transaction's category.
+     * Automatically triggers UI update via expenses Flow.
+     */
+    fun learnFromUserCorrection(expense: Expense, newCategoryId: Long) {
+        viewModelScope.launch {
             try {
-                val sample = group.first()
-                val prediction = smartCategorizer.categorize(
-                    merchantName = sample.merchantName,
-                    amount = sample.amount,
-                    transactionType = sample.transactionType,
-                    message = ""
+                val merchantName = expense.merchantName.trim()
+                if (merchantName.isEmpty()) return@launch
+                
+                _merchantLearningStatus.value = MerchantLearningStatus.Learning(merchantName)
+                
+                val category = getCategoryById(newCategoryId) ?: return@launch
+                
+                // Save to merchant_categories table for future learning
+                merchantCategoryDao.insert(
+                    com.letstrack.app.data.local.entity.MerchantCategoryEntity(
+                        merchantName = merchantName.uppercase(),
+                        mainCategory = category.name,
+                        subCategory = expense.subCategory,
+                        confidence = 1.0,  // 100% confidence - user explicitly chose this
+                        source = "user-correction",
+                        lastUsed = System.currentTimeMillis(),
+                        usageCount = 1,
+                        createdAt = System.currentTimeMillis()
+                    )
                 )
-                if (prediction.category == "Other" || prediction.confidence <= 0.0) continue
-
-                val newCategory = categories.find { it.name == prediction.category } ?: continue
-
-                for (expense in group) {
-                    val alreadyResolved = expense.categoryId == newCategory.id && !expense.needsReview
-                    if (alreadyResolved) continue
-
+                
+                Log.d("ExpensesViewModel", "Learned: ${merchantName.uppercase()} -> ${category.name} (user correction)")
+                
+                // Apply this learning to ALL other transactions from same merchant
+                val updatedCount = applyMerchantLearning(merchantName, newCategoryId)
+                
+                // Update status with result - UI will show feedback
+                _merchantLearningStatus.value = MerchantLearningStatus.Applied(merchantName, updatedCount)
+                
+                // Clear status after 3 seconds
+                delay(3000)
+                _merchantLearningStatus.value = MerchantLearningStatus.Idle
+                
+            } catch (e: Exception) {
+                Log.e("ExpensesViewModel", "Failed to learn from user correction: ${e.message}", e)
+                _merchantLearningStatus.value = MerchantLearningStatus.Error(e.message ?: "Unknown error")
+                delay(3000)
+                _merchantLearningStatus.value = MerchantLearningStatus.Idle
+            }
+        }
+    }
+    
+    /**
+     * Apply learned category to all transactions from a specific merchant.
+     * Returns the number of transactions updated.
+     */
+    private suspend fun applyMerchantLearning(merchantName: String, categoryId: Long): Int {
+        return try {
+            val merchantTransactions = _expenses.value.filter { 
+                it.merchantName.equals(merchantName, ignoreCase = true) 
+            }
+            
+            var updatedCount = 0
+            for (transaction in merchantTransactions) {
+                // Only update if different category
+                if (transaction.categoryId != categoryId) {
                     expenseRepository.updateExpense(
-                        expense.copy(
-                            categoryId = newCategory.id,
+                        transaction.copy(
+                            categoryId = categoryId,
+                            isAiCategorized = false,  // Now it's user-learned!
                             needsReview = false,
-                            isAiCategorized = true,
-                            confidenceScore = prediction.confidence
+                            updatedAt = System.currentTimeMillis()  // Trigger UI update
                         )
                     )
+                    updatedCount++
                 }
-            } catch (e: Exception) {
-                // One merchant failing to resync shouldn't abort the rest, and definitely
-                // shouldn't leave the pull-to-refresh spinner stuck on -- refresh()'s own
-                // try/finally already guarantees isRefreshing resets, but there's no reason
-                // to skip every other merchant just because one had bad data.
-                Log.e("ExpensesViewModel", "Merchant resync failed for a group: ${e.message}", e)
             }
+            
+            Log.d("ExpensesViewModel", "Applied merchant learning: Updated $updatedCount transactions for $merchantName")
+            updatedCount
+            
+        } catch (e: Exception) {
+            Log.e("ExpensesViewModel", "Failed to apply merchant learning: ${e.message}", e)
+            0
         }
     }
 

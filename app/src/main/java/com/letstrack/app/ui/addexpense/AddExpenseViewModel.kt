@@ -19,7 +19,8 @@ import javax.inject.Inject
 class AddExpenseViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
-    private val smartCategorizer: SmartCategorizer
+    private val smartCategorizer: SmartCategorizer,
+    private val merchantCategoryDao: com.letstrack.app.data.local.dao.MerchantCategoryDao
 ) : ViewModel() {
 
     private val _categories = MutableStateFlow<List<Category>>(emptyList())
@@ -28,10 +29,28 @@ class AddExpenseViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(AddExpenseUiState())
     val uiState: StateFlow<AddExpenseUiState> = _uiState.asStateFlow()
 
+    private val _bulkUpdateConfirmation = MutableStateFlow<BulkUpdateConfirmation?>(null)
+    val bulkUpdateConfirmation: StateFlow<BulkUpdateConfirmation?> = _bulkUpdateConfirmation.asStateFlow()
+
     private var currentExpenseId: Long? = null
     // The as-loaded expense, kept so saveExpense() can .copy() from it and preserve fields the
     // form doesn't expose (merchantName, source tracking, AI metadata) instead of losing them.
     private var originalExpense: Expense? = null
+    
+    // Store the onSuccess callback for deferred execution after user confirms/declines
+    private var pendingSuccessCallback: (() -> Unit)? = null
+
+    // Generic merchant names that shouldn't trigger bulk learning
+    private val genericMerchantNames = setOf(
+        "bank transaction",
+        "atm withdrawal",
+        "cash withdrawal",
+        "online transfer",
+        "bank transfer",
+        "debit",
+        "credit",
+        "refund"
+    )
 
     init {
         loadCategories()
@@ -178,10 +197,41 @@ class AddExpenseViewModel @Inject constructor(
                 )
                 expenseRepository.updateExpense(expense)
 
-                // A manual category correction is a real learning signal -- teach the merchant
-                // mapping so a pull-to-refresh on the Expenses tab can propagate it to every
-                // other transaction from the same merchant, not just this one.
-                if (categoryChanged && original != null && original.merchantName.isNotBlank()) {
+                // If category changed for a specific merchant transaction, ask user before bulk update
+                if (categoryChanged && original != null && original.merchantName.isNotBlank() && 
+                    !isGenericMerchant(original.merchantName)) {
+                    // Check how many other transactions would be affected
+                    val affectedCount = countAffectedTransactions(original.merchantName, original.id)
+                    
+                    if (affectedCount > 0) {
+                        // Store the callback for later and show confirmation dialog
+                        pendingSuccessCallback = onSuccess
+                        _bulkUpdateConfirmation.value = BulkUpdateConfirmation(
+                            merchantName = original.merchantName,
+                            categoryId = state.selectedCategory.id,
+                            categoryName = state.selectedCategory.name,
+                            affectedCount = affectedCount,
+                            subCategory = expense.subCategory
+                        )
+                        // Return early - don't call onSuccess yet, wait for user decision
+                        return@launch
+                    }
+                    
+                    // Save merchant learning to database (for future transactions)
+                    merchantCategoryDao.insert(
+                        com.letstrack.app.data.local.entity.MerchantCategoryEntity(
+                            merchantName = original.merchantName.uppercase().trim(),
+                            mainCategory = state.selectedCategory.name,
+                            subCategory = expense.subCategory,
+                            confidence = 1.0,  // 100% - user manually chose this
+                            source = "user-correction",
+                            lastUsed = System.currentTimeMillis(),
+                            usageCount = 1,
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                    
+                    // Also teach SmartCategorizer for future AI predictions
                     val originalCategoryName = _categories.value.find { it.id == original.categoryId }?.name ?: "Other"
                     smartCategorizer.learnFromCorrection(
                         merchantName = original.merchantName,
@@ -217,7 +267,98 @@ class AddExpenseViewModel @Inject constructor(
             onSuccess()
         }
     }
+    
+    /**
+     * Check if a merchant name is generic (shouldn't trigger bulk learning)
+     */
+    private fun isGenericMerchant(merchantName: String): Boolean {
+        return genericMerchantNames.contains(merchantName.lowercase().trim())
+    }
+    
+    /**
+     * Count how many other transactions would be affected by merchant learning
+     */
+    private suspend fun countAffectedTransactions(merchantName: String, excludeId: Long): Int {
+        val allExpenses = expenseRepository.getAllExpenses().first()
+        return allExpenses.count { 
+            it.id != excludeId && 
+            it.merchantName.equals(merchantName, ignoreCase = true) 
+        }
+    }
+    
+    /**
+     * User confirmed bulk update - apply learning to all merchant transactions
+     */
+    fun confirmBulkUpdate() {
+        viewModelScope.launch {
+            val confirmation = _bulkUpdateConfirmation.value
+            if (confirmation != null) {
+                applyMerchantLearning(
+                    confirmation.merchantName, 
+                    confirmation.categoryId,
+                    confirmation.subCategory
+                )
+            }
+            _bulkUpdateConfirmation.value = null
+            // Now call the success callback to navigate away
+            pendingSuccessCallback?.invoke()
+            pendingSuccessCallback = null
+        }
+    }
+    
+    /**
+     * User declined bulk update - just dismiss dialog and navigate
+     */
+    fun declineBulkUpdate() {
+        _bulkUpdateConfirmation.value = null
+        // Still call success callback to navigate away (just don't update other transactions)
+        pendingSuccessCallback?.invoke()
+        pendingSuccessCallback = null
+    }
+
+    /**
+     * Apply learned category to all transactions from a specific merchant.
+     */
+    private suspend fun applyMerchantLearning(merchantName: String, categoryId: Long, subCategory: String?) {
+        try {
+            val allExpenses = expenseRepository.getAllExpenses().first()
+            val merchantTransactions = allExpenses.filter { 
+                it.merchantName.equals(merchantName, ignoreCase = true) 
+            }
+            
+            var updatedCount = 0
+            for (transaction in merchantTransactions) {
+                if (transaction.categoryId != categoryId) {
+                    expenseRepository.updateExpense(
+                        transaction.copy(
+                            categoryId = categoryId,
+                            subCategory = subCategory,
+                            isAiCategorized = false,
+                            needsReview = false,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                    updatedCount++
+                }
+            }
+            
+            android.util.Log.d("AddExpenseViewModel", "✅ Applied learning: Updated $updatedCount transactions for $merchantName")
+        } catch (e: Exception) {
+            android.util.Log.e("AddExpenseViewModel", "Failed to apply merchant learning: ${e.message}", e)
+        }
+    }
 }
+
+/**
+ * Data class for bulk update confirmation dialog
+ */
+data class BulkUpdateConfirmation(
+    val merchantName: String,
+    val categoryId: Long,
+    val categoryName: String,
+    val affectedCount: Int,
+    val subCategory: String?
+)
 
 data class AddExpenseUiState(
     val amount: String = "",

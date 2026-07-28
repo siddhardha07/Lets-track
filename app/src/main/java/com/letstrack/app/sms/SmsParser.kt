@@ -49,16 +49,22 @@ class SmsParser {
         private val MERCHANT_PATTERNS = listOf(
             // Pattern 1: "at MERCHANT" or "to MERCHANT"
             "(?:to|at)\\s+([A-Z][A-Z\\s]{2,30})",
-            // Pattern 2: "UPI ID"
-            "(?:VPA|UPI)\\s+([a-z0-9@\\.]+)",
+            // Pattern 2: UPI ID or VPA (very common for both credits and debits)
+            "(?:VPA|UPI|from)\\s+([a-z0-9@\\.]{5,50})",
             // Pattern 3: "credited from MERCHANT" or "paid to MERCHANT"
-            "(?:credited from|paid to)\\s+([A-Z][A-Z\\s]{2,30})",
+            "(?:credited from|paid to|received from|from)\\s+([A-Z][A-Z\\s]{2,30})",
             // Pattern 4: IDFC format - "; MERCHANT credited|debited"
             ";\\s+([A-Z][A-Z\\s]{2,30})\\s+(?:credited|debited)",
             // Pattern 5: "for MERCHANT" or "on MERCHANT"
             "(?:for|on)\\s+([A-Z][A-Z0-9\\s]{3,30})",
-            // Pattern 6: After "by" - "debited by Rs X for MERCHANT"
-            "(?:debited|credited).*?(?:at|to|for)\\s+([A-Z][A-Z\\s]{3,30})"
+            // Pattern 6: After "by" - "debited by Rs X for MERCHANT" or "credited by MERCHANT"
+            "(?:debited|credited).*?(?:at|to|for|by|from)\\s+([A-Z][A-Z\\s]{3,30})",
+            // Pattern 7: "MERCHANT has credited" or "MERCHANT debited"
+            "([A-Z][A-Z\\s]{3,30})\\s+(?:has\\s+)?(?:credited|debited)",
+            // Pattern 8: Extract sender/source after 'from' regardless of case (for salary, refunds)
+            "(?:salary|refund|cashback|transfer).*?from\\s+([A-Za-z][A-Za-z\\s]{2,30})",
+            // Pattern 9: UPI pattern without keyword - just extract email-like patterns
+            "([a-z0-9]+@[a-z]+)"
         )
 
         private val DEBIT_KEYWORDS = listOf(
@@ -309,6 +315,12 @@ class SmsParser {
             "to cancel",
             "autopay scheduled",
             "mandate scheduled",
+            "mandate is created",
+            "mandate created",
+            "mandate approved",
+            "autopay mandate",
+            "si created",
+            "si registered",
             "reminder:",
             "alert:",
             "notification:",

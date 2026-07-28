@@ -32,12 +32,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -67,6 +69,8 @@ import com.letstrack.app.ui.theme.Elevation
 import com.letstrack.app.ui.theme.ShapeFull
 import com.letstrack.app.ui.theme.ShapeSm
 import com.letstrack.app.ui.theme.Spacing
+import com.letstrack.app.ui.theme.heroCardBorderColor
+import com.letstrack.app.ui.theme.heroCardBrush
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -250,6 +254,73 @@ fun AddExpenseScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+    
+    // Bulk Update Confirmation - Bottom Sheet with Glass Style
+    val bulkUpdateConfirmation by viewModel.bulkUpdateConfirmation.collectAsState()
+    if (bulkUpdateConfirmation != null) {
+        val confirmation = bulkUpdateConfirmation!!
+        val primary = MaterialTheme.colorScheme.primary
+        
+        ModalBottomSheet(
+            onDismissRequest = { viewModel.declineBulkUpdate() },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.lg)
+            ) {
+                // Glass-style card matching the app's hero cards
+                AppCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    backgroundBrush = heroCardBrush(primary),
+                    borderColor = heroCardBorderColor(),
+                    contentPadding = PaddingValues(Spacing.xl)
+                ) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    ) {
+                        Text(
+                            text = "Update All Transactions?",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        
+                        Text(
+                            text = "You changed the category for \"${confirmation.merchantName}\".\n\n" +
+                                "Do you want to update ${confirmation.affectedCount} other " +
+                                "transaction${if (confirmation.affectedCount > 1) "s" else ""} " +
+                                "from this merchant to \"${confirmation.categoryName}\"?",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+                
+                // Action buttons
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    PrimaryButton(
+                        text = "Yes, Update All ${confirmation.affectedCount} Transactions",
+                        onClick = { viewModel.confirmBulkUpdate() },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    TertiaryButton(
+                        text = "No, Just This One",
+                        onClick = { viewModel.declineBulkUpdate() },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(Spacing.md))
             }
         }
     }
