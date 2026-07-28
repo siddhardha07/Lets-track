@@ -61,12 +61,19 @@ class OverlayService : Service() {
     private var composeView: ComposeView? = null
     private var overlayLifecycleOwner: OverlayLifecycleOwner? = null
     private var currentTransactionId: Long? = null // Track currently displayed transaction
+    private var overlayParams: WindowManager.LayoutParams? = null
 
     companion object {
         private const val TAG = "OverlayService"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "overlay_channel"
         const val EXTRA_TRANSACTION = "extra_transaction"
+
+        // Flags the overlay always has, regardless of edit state.
+        private val BASE_FLAGS =
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
     }
 
     override fun onCreate() {
@@ -185,17 +192,15 @@ class OverlayService : Service() {
                                 successMsg.value = "✓ Saved: ${transaction.merchantName} → $category"
                                 showSuccess.value = true
 
-                                // For system overlay, only use category to avoid focus issues
-                                // Subcategory and notes can be edited in-app later
                                 transactionReviewService.confirmTransaction(
                                     transaction,
                                     category,
-                                    null, // subCategory
-                                    null  // notes
+                                    subCategory,
+                                    notes
                                 )
 
                                 // Wait for toast to show, then dismiss
-                                kotlinx.coroutines.delay(2500)
+                                kotlinx.coroutines.delay(1000)
                                 transactionReviewService.dismissReview()
                             }
                         },
@@ -207,13 +212,18 @@ class OverlayService : Service() {
                         },
                         onDismiss = {
                             transactionReviewService.dismissReview()
-                        }
+                        },
+                        onEditingChanged = { isEditing -> setOverlayFocusable(isEditing) }
                     )
                 }
             }
         }
         composeView = view
 
+        // Starts non-focusable (touches pass through, doesn't steal focus from the
+        // app underneath). setOverlayFocusable() flips this on/off on demand while
+        // the user is actually editing a field - see the class doc comment there
+        // for why it can't just be one or the other permanently.
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -223,22 +233,58 @@ class OverlayService : Service() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or  // Don't steal focus from current app
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            BASE_FLAGS or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
         }
+        overlayParams = params
 
         try {
             windowManager?.addView(view, params)
             Log.d(TAG, "✅ Overlay shown successfully over all apps!")
-            // Note: FLAG_NOT_FOCUSABLE stays active - overlay won't steal focus
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to show overlay: ${e.message}", e)
+        }
+    }
+
+    /**
+     * The overlay window is FLAG_NOT_FOCUSABLE by default so it never disturbs
+     * whatever app the user was in (no stolen back-button/input focus). But a
+     * window that can never take focus can also never be the IME's target, so
+     * no text field inside it can bring up the keyboard. There is no in-between
+     * flag - it's binary - so we flip this on for the brief window while the
+     * user is actually editing a field, then flip it back off afterwards.
+     */
+    private fun setOverlayFocusable(focusable: Boolean) {
+        val view = composeView ?: return
+        val params = overlayParams ?: return
+
+        params.flags = if (focusable) {
+            BASE_FLAGS
+        } else {
+            BASE_FLAGS or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+
+        try {
+            windowManager?.updateViewLayout(view, params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to toggle overlay focusability: ${e.message}")
+            return
+        }
+
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+        if (focusable) {
+            // The field was tapped while the window still couldn't take focus,
+            // so the original IME request never landed - ask again now that
+            // the window is eligible. Posted so it runs after the pending
+            // layout pass from updateViewLayout actually lands.
+            view.post {
+                imm?.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            }
+        } else {
+            imm?.hideSoftInputFromWindow(view.windowToken, 0)
         }
     }
 
@@ -255,6 +301,7 @@ class OverlayService : Service() {
         overlayLifecycleOwner = null
         composeView = null
         currentTransactionId = null
+        overlayParams = null
     }
 
     override fun onDestroy() {

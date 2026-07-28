@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -54,7 +55,8 @@ fun SystemOverlayCard(
     onSkip: () -> Unit,
     onDismiss: () -> Unit,
     showSuccessMessage: Boolean = false,
-    successMessage: String = ""
+    successMessage: String = "",
+    onEditingChanged: (Boolean) -> Unit = {}
 ) {
     var selectedCategory by remember(transaction.expenseId) { mutableStateOf(transaction.suggestedCategory) }
     var subCategory by remember(transaction.expenseId) { mutableStateOf(transaction.suggestedSubCategory ?: "") }
@@ -198,6 +200,7 @@ fun SystemOverlayCard(
                         modifier = Modifier
                             .weight(1f)
                             .height(56.dp)
+                            .onFocusChanged { onEditingChanged(it.isFocused) }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
@@ -249,6 +252,7 @@ fun SystemOverlayCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
+                    .onFocusChanged { onEditingChanged(it.isFocused) }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -276,6 +280,7 @@ fun SystemOverlayCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(80.dp)
+                    .onFocusChanged { onEditingChanged(it.isFocused) }
             )
 
             Spacer(modifier = Modifier.height(20.dp))
