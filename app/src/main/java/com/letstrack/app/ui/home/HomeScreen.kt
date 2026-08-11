@@ -20,15 +20,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.PieChart
-import androidx.compose.material.icons.automirrored.filled.TrendingUp
-import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -37,11 +37,14 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -52,8 +55,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.letstrack.app.domain.model.Budget
 import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
 import com.letstrack.app.ui.components.AccentDot
@@ -74,6 +80,7 @@ import com.letstrack.app.ui.components.TertiaryButton
 import com.letstrack.app.ui.theme.ShapeFull
 import com.letstrack.app.ui.theme.Spacing
 import com.letstrack.app.ui.theme.categoricalAccent
+import com.letstrack.app.ui.theme.categoricalAccentMap
 import com.letstrack.app.ui.theme.expenseColor
 import com.letstrack.app.ui.theme.heroCardBorderColor
 import com.letstrack.app.ui.theme.heroCardBrush
@@ -94,7 +101,10 @@ import kotlin.math.roundToInt
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     onSeeAllTransactions: () -> Unit = {},
-    onOpenNotifications: () -> Unit = {}
+    onOpenNotifications: () -> Unit = {},
+    onOpenAi: () -> Unit = {},
+    openBudgetSetupOnLaunch: Boolean = false,
+    onBudgetSetupConsumed: () -> Unit = {}
 ) {
     val keyMetrics by viewModel.keyMetrics.collectAsState()
     val categorySpending by viewModel.categorySpending.collectAsState()
@@ -109,9 +119,22 @@ fun HomeScreen(
     val filteredExpenses by viewModel.filteredExpenses.collectAsState()
     val needsReviewCount by viewModel.needsReviewCount.collectAsState()
     val chartLabelStyle by viewModel.chartLabelStyle.collectAsState()
+    val budgetChartData by viewModel.budgetChartData.collectAsState()
+    val budgets by viewModel.budgets.collectAsState()
 
     var showDatePicker by remember { mutableStateOf(false) }
     var showFilterSheet by remember { mutableStateOf(false) }
+    var showBudgetSetupSheet by remember { mutableStateOf(false) }
+
+    // "+" menu's "Add Budget" entry has no dedicated screen/route of its own -- it navigates
+    // back to Home and sets this one-shot flag instead, which just opens the same sheet Home's
+    // own "Edit" button opens.
+    LaunchedEffect(openBudgetSetupOnLaunch) {
+        if (openBudgetSetupOnLaunch) {
+            showBudgetSetupSheet = true
+            onBudgetSetupConsumed()
+        }
+    }
 
     // Local to the donut card only -- picking categories here inspects the pie breakdown,
     // it must never touch filteredExpenses or the rest of the page (hero balance, bar chart,
@@ -128,9 +151,15 @@ fun HomeScreen(
         }
     }
 
-    val insights = remember(filteredExpenses, categories, categorySpending, keyMetrics) {
-        InsightsEngine.buildInsights(filteredExpenses, categories, categorySpending, keyMetrics)
-    }
+    // Rank-based (by category id), not hue-snapped from each category's own stored color --
+    // guarantees no two categories share a color (until there are more categories than palette
+    // entries), computed from the full list so it doesn't shift depending on what's filtered.
+    val categoryAccentMap = remember(categories) { categoricalAccentMap(categories) }
+
+    // Which graph sections are expanded below the toggle row -- starts empty (all closed) per
+    // design, not persisted across app opens. Ordered by HomeGraphIcon.entries below, not tap
+    // order, so sections don't jump around as the user opens/closes more of them.
+    var openGraphs by remember { mutableStateOf<Set<HomeGraphIcon>>(emptySet()) }
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { paddingValues ->
         LazyColumn(
@@ -152,16 +181,51 @@ fun HomeScreen(
                 )
             }
 
-            if (insights.isNotEmpty()) {
-                item { SectionHeader("AI Insights") }
-                item { InsightsCarousel(insights) }
+            item {
+                GraphToggleRow(
+                    openGraphs = openGraphs,
+                    onToggle = { graph ->
+                        openGraphs = if (graph in openGraphs) openGraphs - graph else openGraphs + graph
+                    },
+                    onAiClick = onOpenAi
+                )
             }
 
-            if (categorySpending.isNotEmpty()) {
+            // Rendered in a fixed order (HomeGraphIcon.entries), not tap order, so opening a
+            // second graph never reshuffles one that's already open.
+            if (HomeGraphIcon.BAR in openGraphs) {
+                item { SectionHeader("Spending Trend") }
+                item {
+                    if (dailySpending.isEmpty()) {
+                        AppCard(modifier = Modifier.fillMaxWidth()) {
+                            EmptyState(title = "No spending yet", subtitle = "Your daily spending trend will show up here.")
+                        }
+                    } else {
+                        val primary = MaterialTheme.colorScheme.primary
+                        AppCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundBrush = heroCardBrush(primary),
+                            borderColor = heroCardBorderColor()
+                        ) {
+                            SpendingTrendChart(
+                                dailySpending = dailySpending,
+                                labelStyle = chartLabelStyle,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (HomeGraphIcon.PIE in openGraphs) {
                 item { SectionHeader("Spending by Category") }
                 item {
                     CategoryBreakdownCard(
                         categorySpending = visibleCategorySpending,
+                        // Built from the full category list, not visibleCategorySpending's
+                        // (possibly donut-filtered) subset -- so a category's color stays the
+                        // same whether or not the donut picker has narrowed the view.
+                        accentMap = categoryAccentMap,
                         selectedCategoryIds = donutSelectedCategoryIds,
                         onOpenCategoryPicker = { showDonutCategoryPicker = true },
                         onClearSelection = { donutSelectedCategoryIds = emptySet() }
@@ -169,20 +233,24 @@ fun HomeScreen(
                 }
             }
 
-            if (dailySpending.isNotEmpty()) {
-                item { SectionHeader("Spending Trend") }
+            if (HomeGraphIcon.BUDGET in openGraphs) {
                 item {
-                    val primary = MaterialTheme.colorScheme.primary
-                    AppCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        backgroundBrush = heroCardBrush(primary),
-                        borderColor = heroCardBorderColor()
-                    ) {
-                        SpendingTrendChart(
-                            dailySpending = dailySpending,
-                            labelStyle = chartLabelStyle,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                    SectionHeader("Budget", actionLabel = "Edit", onActionClick = { showBudgetSetupSheet = true })
+                }
+                item {
+                    BudgetCard(
+                        data = budgetChartData,
+                        accentMap = categoryAccentMap,
+                        onSetBudget = { showBudgetSetupSheet = true }
+                    )
+                }
+            }
+
+            if (HomeGraphIcon.SAVINGS in openGraphs) {
+                item { SectionHeader("Saving Goals") }
+                item {
+                    AppCard(modifier = Modifier.fillMaxWidth()) {
+                        EmptyState(title = "Saving goals are coming soon", subtitle = "Add a goal from the + button and track it here as a card.")
                     }
                 }
             }
@@ -253,7 +321,139 @@ fun HomeScreen(
             onDismiss = { showDonutCategoryPicker = false }
         )
     }
+
+    if (showBudgetSetupSheet) {
+        BudgetSetupSheet(
+            budgets = budgets,
+            categories = categories,
+            onSetOverall = viewModel::setOverallBudget,
+            onClearOverall = viewModel::clearOverallBudget,
+            onSetCategory = viewModel::setCategoryBudget,
+            onClearCategory = viewModel::clearCategoryBudget,
+            onDismiss = { showBudgetSetupSheet = false }
+        )
+    }
 }
+
+@Composable
+private fun BudgetCard(
+    data: BudgetChartData,
+    accentMap: Map<Long, Color>,
+    onSetBudget: () -> Unit
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    AppCard(
+        modifier = Modifier.fillMaxWidth(),
+        backgroundBrush = heroCardBrush(primary),
+        borderColor = heroCardBorderColor()
+    ) {
+        if (data.rows.isEmpty()) {
+            EmptyState(
+                title = "No budget set yet",
+                subtitle = "Set an overall or per-category monthly limit to track spending against it."
+            )
+            Spacer(Modifier.height(Spacing.md))
+            PrimaryButton(text = "Set a budget", onClick = onSetBudget, modifier = Modifier.fillMaxWidth())
+        } else {
+            BudgetBarsChart(data = data, accentMap = accentMap, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BudgetSetupSheet(
+    budgets: List<Budget>,
+    categories: List<Category>,
+    onSetOverall: (Double) -> Unit,
+    onClearOverall: () -> Unit,
+    onSetCategory: (Long, Double) -> Unit,
+    onClearCategory: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var overallText by remember {
+        mutableStateOf(budgets.find { it.categoryId == null }?.amount?.let { formatPlainAmount(it) } ?: "")
+    }
+    val categoryTexts = remember {
+        val map = mutableStateMapOf<Long, String>()
+        categories.forEach { category ->
+            val existing = budgets.find { it.categoryId == category.id }?.amount
+            map[category.id] = existing?.let { formatPlainAmount(it) } ?: ""
+        }
+        map
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(Spacing.lg)
+        ) {
+            // Save sits next to the title instead of at the bottom of the field list -- with
+            // enough categories the button used to be a scroll away, easy to miss entirely.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Monthly budget", style = MaterialTheme.typography.titleLarge)
+                PrimaryButton(
+                    text = "Save",
+                    onClick = {
+                        val overallAmount = overallText.toDoubleOrNull()
+                        if (overallAmount != null && overallAmount > 0) onSetOverall(overallAmount) else onClearOverall()
+                        categories.forEach { category ->
+                            val amount = categoryTexts[category.id]?.toDoubleOrNull()
+                            if (amount != null && amount > 0) onSetCategory(category.id, amount) else onClearCategory(category.id)
+                        }
+                        onDismiss()
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(Spacing.lg))
+
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(Spacing.lg)
+            ) {
+                item {
+                    OutlinedTextField(
+                        value = overallText,
+                        onValueChange = { overallText = it },
+                        label = { Text("Overall limit") },
+                        placeholder = { Text("Leave blank for no overall limit") },
+                        prefix = { Text("₹") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+
+                item { Text("Per-category limits", style = MaterialTheme.typography.titleSmall) }
+
+                items(categories, key = { it.id }) { category ->
+                    OutlinedTextField(
+                        value = categoryTexts[category.id] ?: "",
+                        onValueChange = { categoryTexts[category.id] = it },
+                        label = { Text(category.name) },
+                        placeholder = { Text("No limit") },
+                        prefix = { Text("₹") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Plain numeric string for editing (no currency symbol/grouping) -- formatCurrency's locale
+ * formatting isn't safe to feed back into toDoubleOrNull(). */
+private fun formatPlainAmount(amount: Double): String =
+    if (amount == amount.toLong().toDouble()) amount.toLong().toString() else amount.toString()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -301,13 +501,16 @@ private fun FlowRowWrap(
 ) {
     // Simple wrapping chip layout (no experimental FlowRow needed): fixed-width rows of chips.
     val rows = remember(categories) { categories.chunked(3) }
+    // Rank-based, not hue-snapped -- guarantees every chip here gets its own distinct color
+    // instead of two similarly-colored categories collapsing onto the same one.
+    val accentMap = remember(categories) { categoricalAccentMap(categories) }
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
         rows.forEach { rowCategories ->
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 rowCategories.forEach { category ->
                     CategoryFilterChip(
                         label = category.name,
-                        accent = categoricalAccent(category.color),
+                        accent = accentMap[category.id] ?: categoricalAccent(category.color),
                         selected = category.id in selectedCategoryIds,
                         onClick = { onCategoryToggle(category.id) }
                     )
@@ -434,60 +637,92 @@ private fun TimeFilter.shortLabel(): String = when (this) {
     else -> "Custom"
 }
 
-@Composable
-private fun InsightsCarousel(insights: List<Insight>, modifier: Modifier = Modifier) {
-    LazyRow(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Spacing.md)
-    ) {
-        items(insights, key = { it.kind }) { insight ->
-            InsightCard(insight = insight, modifier = Modifier.width(260.dp))
-        }
-    }
+/** The graph sections the toggle row can expand -- order here is the fixed render order in
+ * [HomeScreen], independent of the order the user actually taps them in. AI isn't part of this
+ * enum since it doesn't expand inline -- it navigates to its own chat screen instead. */
+enum class HomeGraphIcon(val label: String, val icon: ImageVector) {
+    BAR("Trend", Icons.Filled.BarChart),
+    PIE("Categories", Icons.Filled.PieChart),
+    BUDGET("Budget", Icons.Filled.AccountBalanceWallet),
+    SAVINGS("Goals", Icons.Filled.Savings)
 }
 
+/**
+ * Replaces the old always-visible "AI Insights" carousel: every graph on Home now starts
+ * collapsed, and this row is the single place that opens/closes each one (multiple can be open
+ * at once, to compare). AI is deliberately not a toggle -- tapping it always calls [onAiClick]
+ * (navigate to chat, or the caller can show a "set up your API key" toast) rather than expanding
+ * a section here.
+ */
 @Composable
-private fun InsightCard(insight: Insight, modifier: Modifier = Modifier) {
-    AppCard(variant = AppCardVariant.Outlined, modifier = modifier) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(ShapeFull)
-                    .background(insightTint(insight.tone).copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = insightIcon(insight.kind),
-                    contentDescription = null,
-                    tint = insightTint(insight.tone),
-                    modifier = Modifier.size(16.dp)
+private fun GraphToggleRow(
+    openGraphs: Set<HomeGraphIcon>,
+    onToggle: (HomeGraphIcon) -> Unit,
+    onAiClick: () -> Unit
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    AppCard(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(vertical = Spacing.lg, horizontal = Spacing.sm),
+        backgroundBrush = heroCardBrush(primary),
+        borderColor = heroCardBorderColor()
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            HomeGraphIcon.entries.forEach { graph ->
+                GraphToggleIconButton(
+                    icon = graph.icon,
+                    label = graph.label,
+                    selected = graph in openGraphs,
+                    onClick = { onToggle(graph) }
                 )
             }
-            Text(insight.message, style = MaterialTheme.typography.bodyMedium)
+            GraphToggleIconButton(
+                icon = Icons.Filled.AutoAwesome,
+                label = "AI",
+                selected = false,
+                onClick = onAiClick
+            )
         }
     }
 }
 
-private fun insightIcon(kind: InsightKind): ImageVector = when (kind) {
-    InsightKind.PERIOD_COMPARISON -> Icons.AutoMirrored.Filled.TrendingUp
-    InsightKind.TOP_CATEGORY -> Icons.Filled.PieChart
-    InsightKind.AUTO_CATEGORIZATION -> Icons.Filled.AutoAwesome
-    InsightKind.TIME_OF_DAY_PATTERN -> Icons.Filled.Schedule
-    InsightKind.RECURRING_MERCHANTS -> Icons.Filled.Autorenew
-}
-
 @Composable
-private fun insightTint(tone: InsightTone): Color = when (tone) {
-    InsightTone.POSITIVE -> incomeColor()
-    InsightTone.NEGATIVE -> expenseColor()
-    InsightTone.WARNING -> needsReviewColor()
-    InsightTone.NEUTRAL -> MaterialTheme.colorScheme.primary
+private fun GraphToggleIconButton(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    // Tinted with the theme's own primary color (not a hardcoded one) so these icons follow
+    // whichever AccentTheme the user has picked, same as every other themed element on Home.
+    val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier
+                .size(58.dp)
+                .clip(ShapeFull)
+                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.06f))
+        ) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(30.dp))
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = tint,
+            maxLines = 1
+        )
+    }
 }
 
 @Composable
 private fun CategoryBreakdownCard(
     categorySpending: List<CategorySpending>,
+    accentMap: Map<Long, Color>,
     selectedCategoryIds: Set<Long> = emptySet(),
     onOpenCategoryPicker: () -> Unit = {},
     onClearSelection: () -> Unit = {}
@@ -520,6 +755,7 @@ private fun CategoryBreakdownCard(
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 CategoryDonutChart(
                     categorySpending = categorySpending,
+                    accentMap = accentMap,
                     centerLabel = formatCurrency(total),
                     selectedCategoryIds = selectedCategoryIds
                 )
@@ -529,6 +765,7 @@ private fun CategoryBreakdownCard(
                 categorySpending.forEach { spending ->
                     CategoryLegendRow(
                         spending = spending,
+                        accent = accentMap[spending.category.id] ?: categoricalAccent(spending.category.color),
                         isSelected = spending.category.id in selectedCategoryIds,
                         isDimmed = selectedCategoryIds.isNotEmpty() && spending.category.id !in selectedCategoryIds
                     )
@@ -541,10 +778,10 @@ private fun CategoryBreakdownCard(
 @Composable
 private fun CategoryLegendRow(
     spending: CategorySpending,
+    accent: Color,
     isSelected: Boolean = false,
     isDimmed: Boolean = false
 ) {
-    val accent = categoricalAccent(spending.category.color)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -659,6 +896,7 @@ private fun FilterBottomSheet(
     onClearAccounts: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val accentMap = remember(categories) { categoricalAccentMap(categories) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -708,7 +946,7 @@ private fun FilterBottomSheet(
                     items(categories, key = { it.id }) { category ->
                         CategoryFilterChip(
                             label = category.name,
-                            accent = categoricalAccent(category.color),
+                            accent = accentMap[category.id] ?: categoricalAccent(category.color),
                             selected = category.id in selectedCategories,
                             onClick = { onCategoryToggle(category.id) }
                         )

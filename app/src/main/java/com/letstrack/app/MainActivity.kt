@@ -101,6 +101,7 @@ fun MainNavigation(
     val navController = rememberNavController()
     val transactionReviewService: TransactionReviewService = hiltViewModel<TransactionReviewViewModel>().service
     var showAddBottomSheet by remember { mutableStateOf(false) }
+    var pendingOpenBudgetSetup by remember { mutableStateOf(false) }
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showFirstLaunchPermissionDialog by remember { mutableStateOf(false) }
     var showOverlayPermissionDialog by remember { mutableStateOf(false) }
@@ -167,13 +168,21 @@ fun MainNavigation(
             modifier = Modifier.padding(paddingValues)
         ) {
             composable(BottomNavItem.Home.route) {
+                // TODO(AI feature): once API-key storage exists, branch here -- navigate to the
+                // AI chat screen if a key is configured, otherwise keep this toast.
+                val homeContext = LocalContext.current
                 HomeScreen(
                     onSeeAllTransactions = {
                         navController.navigate(BottomNavItem.Expenses.route)
                     },
                     onOpenNotifications = {
                         navController.navigate("notifications")
-                    }
+                    },
+                    onOpenAi = {
+                        android.widget.Toast.makeText(homeContext, "Setup API key", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    openBudgetSetupOnLaunch = pendingOpenBudgetSetup,
+                    onBudgetSetupConsumed = { pendingOpenBudgetSetup = false }
                 )
             }
 
@@ -379,6 +388,20 @@ fun MainNavigation(
                 // primary/recommended option, this just gives JSON its own visible
                 // entry point instead of being hidden inside the PDF flow.
                 navController.navigate("pdf_import")
+            },
+            onBudgetClick = {
+                showAddBottomSheet = false
+                // No dedicated Budget screen/route yet -- reuses the same setup sheet Home's
+                // own "Edit" button opens, just triggered from here via a one-shot flag instead
+                // of a nav argument, since BottomNavItem.Home.route takes none today.
+                pendingOpenBudgetSetup = true
+                navController.navigate(BottomNavItem.Home.route) { launchSingleTop = true }
+            },
+            onSavingGoalClick = {
+                showAddBottomSheet = false
+                // Savings goals aren't built yet (separate task) -- routes to the same "Coming
+                // soon" screen the More tab uses, rather than a dead button.
+                navController.navigate(BottomNavItem.Placeholder.route)
             }
         )
     }

@@ -9,6 +9,7 @@ import androidx.room.Room
 import com.letstrack.app.data.local.DatabaseCallback
 import com.letstrack.app.data.local.LetsTrackDatabase
 import com.letstrack.app.data.local.dao.BankAccountDao
+import com.letstrack.app.data.local.dao.BudgetDao
 import com.letstrack.app.data.local.dao.CategoryDao
 import com.letstrack.app.data.local.dao.ExpenseDao
 import com.letstrack.app.data.local.dao.SmsTransactionDao
@@ -17,9 +18,11 @@ import com.letstrack.app.data.local.dao.UserCorrectionDao
 import com.letstrack.app.data.local.dao.PendingReviewDao
 import com.letstrack.app.data.local.dao.SubCategoryDao
 import com.letstrack.app.data.repository.BankAccountRepositoryImpl
+import com.letstrack.app.data.repository.BudgetRepositoryImpl
 import com.letstrack.app.data.repository.CategoryRepositoryImpl
 import com.letstrack.app.data.repository.ExpenseRepositoryImpl
 import com.letstrack.app.domain.repository.BankAccountRepository
+import com.letstrack.app.domain.repository.BudgetRepository
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
 import dagger.Module
@@ -68,7 +71,7 @@ object AppModule {
             "letstrack_database"
         )
             .addCallback(callback)
-            .addMigrations(MIGRATION_5_6)
+            .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
             .fallbackToDestructiveMigration() // For development - remove in production
             .build()
     }
@@ -138,6 +141,31 @@ object AppModule {
             database.execSQL("ALTER TABLE expenses ADD COLUMN categorizationSource TEXT NOT NULL DEFAULT 'manual'")
             database.execSQL("ALTER TABLE expenses ADD COLUMN isPendingReview INTEGER NOT NULL DEFAULT 0")
         }
+    }
+
+    // Migration from version 6 to 7 (monthly budgets: overall + per-category)
+    private val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS budgets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    categoryId INTEGER,
+                    amount REAL NOT NULL,
+                    updatedAt INTEGER NOT NULL
+                )
+            """)
+        }
+    }
+
+    @Provides
+    fun provideBudgetDao(database: LetsTrackDatabase): BudgetDao {
+        return database.budgetDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideBudgetRepository(budgetDao: BudgetDao): BudgetRepository {
+        return BudgetRepositoryImpl(budgetDao)
     }
 
     @Provides

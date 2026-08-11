@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.DataObject
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +48,9 @@ fun AddActionMenu(
     onManualClick: () -> Unit,
     onPdfClick: () -> Unit,
     onCsvClick: () -> Unit,
-    onJsonClick: () -> Unit
+    onJsonClick: () -> Unit,
+    onBudgetClick: () -> Unit,
+    onSavingGoalClick: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -94,6 +98,22 @@ fun AddActionMenu(
                     color = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                     onClick = onJsonClick
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xl)) {
+                AddActionCircle(
+                    icon = Icons.Filled.AccountBalanceWallet,
+                    label = "Add Budget",
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    onClick = onBudgetClick
+                )
+                AddActionCircle(
+                    icon = Icons.Filled.Savings,
+                    label = "Add Saving Goal",
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    onClick = onSavingGoalClick
                 )
             }
 

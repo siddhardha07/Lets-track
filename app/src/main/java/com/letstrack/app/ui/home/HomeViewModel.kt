@@ -3,9 +3,11 @@ package com.letstrack.app.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.letstrack.app.domain.model.BankAccount
+import com.letstrack.app.domain.model.Budget
 import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
 import com.letstrack.app.domain.repository.BankAccountRepository
+import com.letstrack.app.domain.repository.BudgetRepository
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
 import com.letstrack.app.ui.components.DateRange
@@ -14,6 +16,34 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import javax.inject.Inject
+
+/** One bar on the Budget graph -- [category] null means the "Overall" bar. Shows both how much
+ * has been spent and how much headroom is left (budgetAmount - spentAmount), not just a spend
+ * total, since that's the actual question a budget bar needs to answer. */
+data class BudgetBarRow(
+    val category: Category?,
+    val spentAmount: Double,
+    val budgetAmount: Double
+) {
+    val label: String get() = category?.name ?: "Overall"
+    val isOverBudget: Boolean get() = spentAmount > budgetAmount
+}
+
+/**
+ * Everything the Budget graph card needs to render. Built from [HomeViewModel.categorySpending]
+ * (same flow the Category donut uses) rather than a separate always-this-month computation, so
+ * Home's time filter, custom range, and account filter all apply to Budget exactly like they do
+ * to the other graphs.
+ *
+ * Row selection: with no category filter active, shows the Overall bar (if configured) plus the
+ * top-spending budgeted categories, 4 bars total by default. Once the user picks specific
+ * categories in Home's Filters sheet, shows exactly those instead -- no cap, no Overall bar
+ * (a single-category view has nothing "overall" left to show).
+ */
+data class BudgetChartData(
+    val totalSpent: Double,
+    val rows: List<BudgetBarRow>
+)
 
 data class CategorySpending(
     val category: Category,
@@ -56,9 +86,12 @@ private fun estimatedSpanDays(filter: TimeFilter, customRange: DateRange?): Int 
     } ?: 30
 }
 
+// Daily labels stop being legible well before 31 days -- THIS_MONTH's ~28-31 day span was
+// staying on DAY_OF_MONTH and cramming 28+ labels onto one axis. Dropping the daily ceiling to
+// 20 days means THIS_MONTH (and anything similarly sized) now buckets into weeks instead.
 private fun chartGranularityForSpan(spanDays: Int): ChartLabelStyle = when {
     spanDays <= 7 -> ChartLabelStyle.WEEKDAY
-    spanDays <= 31 -> ChartLabelStyle.DAY_OF_MONTH
+    spanDays <= 20 -> ChartLabelStyle.DAY_OF_MONTH
     spanDays <= 60 -> ChartLabelStyle.WEEK_NUMBER
     else -> ChartLabelStyle.MONTH_NAME
 }
@@ -67,8 +100,31 @@ private fun chartGranularityForSpan(spanDays: Int): ChartLabelStyle = when {
 class HomeViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
-    private val bankAccountRepository: BankAccountRepository
+    private val bankAccountRepository: BankAccountRepository,
+    private val budgetRepository: BudgetRepository
 ) : ViewModel() {
+
+    // Raw configured budgets (no spend attached) -- what the setup sheet edits. Budget *status*
+    // for display (spend vs limit) is [budgetChartData] below, kept separate since that one is
+    // filter-dependent and this one isn't.
+    val budgets: StateFlow<List<Budget>> = budgetRepository.getAllBudgets()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun setOverallBudget(amount: Double) {
+        viewModelScope.launch { budgetRepository.setOverallBudget(amount) }
+    }
+
+    fun setCategoryBudget(categoryId: Long, amount: Double) {
+        viewModelScope.launch { budgetRepository.setCategoryBudget(categoryId, amount) }
+    }
+
+    fun clearOverallBudget() {
+        viewModelScope.launch { budgetRepository.clearOverallBudget() }
+    }
+
+    fun clearCategoryBudget(categoryId: Long) {
+        viewModelScope.launch { budgetRepository.clearCategoryBudget(categoryId) }
+    }
 
     private val _expenses = MutableStateFlow<List<Expense>>(emptyList())
     val expenses: StateFlow<List<Expense>> = _expenses.asStateFlow()
@@ -286,6 +342,34 @@ class HomeViewModel @Inject constructor(
             )
         }.sortedBy { it.date }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val budgetChartData: StateFlow<BudgetChartData> = combine(
+        budgets,
+        categorySpending,
+        _selectedCategories
+    ) { budgetList, catSpending, selectedCats ->
+        val totalSpent = catSpending.sumOf { it.totalAmount }
+
+        // Based on categorySpending (already respects every Home filter) rather than iterating
+        // all configured budgets, so a category with a budget but no spend in the current view
+        // doesn't show up sitting at a stale zero.
+        val categoryRows = catSpending.mapNotNull { spending ->
+            val budgetAmount = budgetList.find { it.categoryId == spending.category.id }?.amount
+                ?: return@mapNotNull null
+            BudgetBarRow(spending.category, spending.totalAmount, budgetAmount)
+        }
+
+        val rows = if (selectedCats.isNotEmpty()) {
+            categoryRows.filter { it.category != null && it.category.id in selectedCats }
+        } else {
+            val overallBudget = budgetList.find { it.categoryId == null }?.amount
+            val overallRow = overallBudget?.let { BudgetBarRow(null, totalSpent, it) }
+            val remainingSlots = if (overallRow != null) 3 else 4
+            listOfNotNull(overallRow) + categoryRows.sortedByDescending { it.spentAmount }.take(remainingSlots)
+        }
+
+        BudgetChartData(totalSpent, rows)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BudgetChartData(0.0, emptyList()))
 
     // Key metrics with comparison
     val keyMetrics: StateFlow<KeyMetrics> = combine(

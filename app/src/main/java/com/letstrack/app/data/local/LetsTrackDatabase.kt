@@ -3,6 +3,7 @@ package com.letstrack.app.data.local
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.letstrack.app.data.local.dao.BankAccountDao
+import com.letstrack.app.data.local.dao.BudgetDao
 import com.letstrack.app.data.local.dao.CategoryDao
 import com.letstrack.app.data.local.dao.ExpenseDao
 import com.letstrack.app.data.local.dao.SmsTransactionDao
@@ -24,9 +25,10 @@ import com.letstrack.app.data.local.entity.*
         MerchantCategoryEntity::class,
         UserCorrectionEntity::class,
         PendingReviewTransactionEntity::class,
-        SubCategoryEntity::class
+        SubCategoryEntity::class,
+        BudgetEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class LetsTrackDatabase : RoomDatabase() {
@@ -38,4 +40,5 @@ abstract class LetsTrackDatabase : RoomDatabase() {
     abstract fun userCorrectionDao(): UserCorrectionDao
     abstract fun pendingReviewDao(): PendingReviewDao
     abstract fun subCategoryDao(): SubCategoryDao
+    abstract fun budgetDao(): BudgetDao
 }

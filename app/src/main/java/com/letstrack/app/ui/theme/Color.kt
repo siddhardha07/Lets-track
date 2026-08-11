@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import com.letstrack.app.domain.model.Category
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -95,6 +96,36 @@ fun categoricalAccent(hex: String): Color {
     return CategoricalPalette.minByOrNull { candidate ->
         hueDistance(targetHue, candidate.toHue())
     } ?: CategorySlate
+}
+
+/**
+ * Assigns each category a distinct color by its rank among [categories] (sorted by id), instead
+ * of snapping its own stored hex to the nearest palette hue like [categoricalAccent] does --
+ * hue-snapping let two categories with similar ad-hoc colors collapse onto the same palette entry
+ * (e.g. two purple-ish categories both landing on violet).
+ *
+ * The first [CategoricalPalette] entries (10) go to the hand-picked, on-brand colors. Past that,
+ * silently wrapping back to CategoricalPalette[0] would just recreate the exact same collision
+ * for a different reason -- so instead it generates evenly-spaced hues around the color wheel for
+ * however many extra categories exist, which stays collision-free no matter how many categories
+ * a real account accumulates over time, not just up to 10.
+ *
+ * Used for the charts/legends/chips where multiple categories are directly compared side by side
+ * (donut + legend, budget bars, filter chips) -- category icon backgrounds elsewhere still use
+ * [categoricalAccent] on the raw stored hex, since those aren't shown side by side the same way.
+ */
+fun categoricalAccentMap(categories: List<Category>): Map<Long, Color> {
+    val distinctById = categories.distinctBy { it.id }.sortedBy { it.id }
+    val overflowCount = (distinctById.size - CategoricalPalette.size).coerceAtLeast(0)
+    return distinctById.mapIndexed { index, category ->
+        val color = if (index < CategoricalPalette.size) {
+            CategoricalPalette[index]
+        } else {
+            val hue = 360f * (index - CategoricalPalette.size) / overflowCount
+            Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.85f)))
+        }
+        category.id to color
+    }.toMap()
 }
 
 private fun Color.toHue(): Float {

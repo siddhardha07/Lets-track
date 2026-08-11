@@ -32,17 +32,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.letstrack.app.ui.theme.ShapeFull
 import com.letstrack.app.ui.theme.accentGradient
+import com.letstrack.app.ui.theme.mixWith
 import com.letstrack.app.ui.theme.Spacing
 import com.letstrack.app.ui.theme.categoricalAccent
 import java.text.SimpleDateFormat
@@ -61,6 +68,7 @@ import kotlin.math.roundToInt
 @Composable
 fun CategoryDonutChart(
     categorySpending: List<CategorySpending>,
+    accentMap: Map<Long, Color>,
     centerLabel: String,
     modifier: Modifier = Modifier,
     selectedCategoryIds: Set<Long> = emptySet()
@@ -99,8 +107,9 @@ fun CategoryDonutChart(
                 val sweep = (spending.percentage / 100f) * 360f * sweepProgress.value
                 val isDimmed = selectedCategoryIds.isNotEmpty() && spending.category.id !in selectedCategoryIds
                 if (sweep > 0f) {
+                    val accent = accentMap[spending.category.id] ?: categoricalAccent(spending.category.color)
                     drawArc(
-                        color = categoricalAccent(spending.category.color).copy(alpha = if (isDimmed) 0.3f else 1f),
+                        color = accent.copy(alpha = if (isDimmed) 0.3f else 1f),
                         startAngle = startAngle,
                         sweepAngle = sweep,
                         useCenter = false,
@@ -289,6 +298,138 @@ fun SpendingTrendChart(
         }
     }
 }
+
+/**
+ * Budget graph: a "thermometer" bar per row -- each bar's filled portion is spend, the faint
+ * track above it is remaining headroom up to the budget, so both "how much spent" and "how much
+ * more can I spend" read directly off one bar instead of needing a separate number. A bar that
+ * hits the top (spent >= budget) turns red instead of overflowing the track. Built from
+ * [BudgetChartData], which picks which rows to show (Overall + top spenders by default, or
+ * exactly the categories the user filtered to) -- this composable just draws whatever list it's
+ * handed.
+ */
+@Composable
+fun BudgetBarsChart(
+    data: BudgetChartData,
+    accentMap: Map<Long, Color>,
+    modifier: Modifier = Modifier
+) {
+    if (data.rows.isEmpty()) return
+
+    Row(
+        modifier = modifier.fillMaxWidth().height(200.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.Bottom
+    ) {
+        data.rows.forEach { row ->
+            BudgetBarColumn(row = row, accentMap = accentMap, modifier = Modifier.weight(1f).fillMaxHeight())
+        }
+    }
+}
+
+@Composable
+private fun BudgetBarColumn(row: BudgetBarRow, accentMap: Map<Long, Color>, modifier: Modifier = Modifier) {
+    // Same rank-based map the Category donut/legend/filter chips use, so a category's color
+    // matches everywhere on Home, not just within this one card.
+    val accent = row.category?.let { accentMap[it.id] ?: categoricalAccent(it.color) } ?: MaterialTheme.colorScheme.primary
+    val errorColor = MaterialTheme.colorScheme.error
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    val barColor = if (row.isOverBudget) errorColor else accent
+
+    // Scaled to whichever is taller, spend or the limit -- no extra headroom padding on top of
+    // that (there used to be a 1.15x pad, which left a permanent unfilled dark cap at the very
+    // top of every bar, even the tallest one). Now whichever value is tallest always reaches
+    // the full height of the bar.
+    val axisMax = remember(row) { maxOf(row.budgetAmount, row.spentAmount, 1.0) }
+    val limitFraction = (row.budgetAmount / axisMax).toFloat().coerceIn(0f, 1f)
+
+    val progress = remember(row) { Animatable(0f) }
+    LaunchedEffect(row) {
+        progress.snapTo(0f)
+        progress.animateTo(1f, animationSpec = tween(600, easing = FastOutSlowInEasing))
+    }
+    val spentFraction = (row.spentAmount / axisMax).toFloat().coerceIn(0f, 1f) * progress.value
+
+    // "Glassy" treatment (translucent gradient stops, same language as heroCardBrush elsewhere)
+    // for both segments, not a flat opaque fill.
+    val accentGlassBrush = Brush.verticalGradient(
+        listOf(accent.mixWith(Color.White, 0.15f).copy(alpha = 0.9f), accent.mixWith(Color.Black, 0.3f).copy(alpha = 0.75f))
+    )
+    val errorGlassBrush = Brush.verticalGradient(
+        listOf(errorColor.mixWith(Color.White, 0.3f).copy(alpha = 0.9f), errorColor.mixWith(Color.Black, 0.35f).copy(alpha = 0.75f))
+    )
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Bottom
+    ) {
+        Text(
+            text = "Limit ${formatCurrency(row.budgetAmount)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
+        )
+        Spacer(Modifier.height(Spacing.xs))
+        Canvas(
+            modifier = Modifier
+                .width(40.dp)
+                .weight(1f)
+        ) {
+            val corner = size.width / 2f
+            val trackShape = Path().apply {
+                addRoundRect(RoundRect(0f, 0f, size.width, size.height, CornerRadius(corner, corner)))
+            }
+            clipPath(trackShape) {
+                drawRect(color = trackColor)
+                // Below the limit: the category's own accent, same color language as every
+                // other budget/category visual. Above it: always red, regardless of category --
+                // this is the one signal that's meant to be unmissable.
+                val belowLimitFraction = minOf(spentFraction, limitFraction)
+                if (belowLimitFraction > 0f) {
+                    drawRect(
+                        brush = accentGlassBrush,
+                        topLeft = Offset(0f, size.height * (1f - belowLimitFraction)),
+                        size = Size(size.width, size.height * belowLimitFraction)
+                    )
+                }
+                if (spentFraction > limitFraction) {
+                    drawRect(
+                        brush = errorGlassBrush,
+                        topLeft = Offset(0f, size.height * (1f - spentFraction)),
+                        size = Size(size.width, size.height * (spentFraction - limitFraction))
+                    )
+                }
+            }
+            // Dashed marker at exactly the budget limit's height, drawn outside the clip so it
+            // isn't cut off by the track's rounded corners.
+            val limitY = size.height * (1f - limitFraction)
+            drawLine(
+                color = Color.White.copy(alpha = 0.85f),
+                start = Offset(0f, limitY),
+                end = Offset(size.width, limitY),
+                strokeWidth = 1.5.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 4f))
+            )
+        }
+        Spacer(Modifier.height(Spacing.sm))
+        Text(
+            text = formatCurrency(row.spentAmount),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = barColor,
+            maxLines = 1
+        )
+        Text(
+            text = row.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            maxLines = 1
+        )
+    }
+}
+
 
 /** Picks a "nice" round axis step (1/2/5 x a power of ten) so 4 ticks cover [maxValue]. */
 private fun niceAxisStep(maxValue: Double): Double {
