@@ -42,12 +42,46 @@ class SmsBroadcastReceiver : BroadcastReceiver() {
 
         Log.d(TAG, "📱 SMS_RECEIVED_ACTION confirmed! Getting messages...")
 
+        if (context == null) return
+
         try {
             val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
             Log.d(TAG, "📱 Got ${messages?.size ?: 0} SMS messages")
 
-            messages?.forEach { smsMessage ->
-                processSmsMessage(context, smsMessage)
+            if (messages.isNullOrEmpty()) return
+
+            // Hold the broadcast open until every message is actually processed.
+            // Without goAsync(), Android considers this broadcast "done" the instant
+            // onReceive() returns and is free to freeze or kill the app process at any
+            // point after that - including mid-way through the DB insert running on
+            // Dispatchers.IO below. That race is why some SMS were being received
+            // (logged) but never turning into a transaction: the process got killed
+            // before the coroutine finished. This is especially aggressive on OEM
+            // skins (Vivo/Funtouch included) that impose their own background limits
+            // on top of stock Android's.
+            val pendingResult = goAsync()
+            val finished = java.util.concurrent.atomic.AtomicBoolean(false)
+            val finishOnce = {
+                if (finished.compareAndSet(false, true)) {
+                    pendingResult.finish()
+                }
+            }
+            val remaining = java.util.concurrent.atomic.AtomicInteger(messages.size)
+            val onOneDone = {
+                if (remaining.decrementAndGet() == 0) {
+                    finishOnce()
+                }
+            }
+
+            try {
+                messages.forEach { smsMessage ->
+                    processSmsMessage(context, smsMessage, onOneDone)
+                }
+            } catch (e: Exception) {
+                // Make sure we still release the broadcast if something throws
+                // synchronously before every message got its onComplete callback wired up.
+                Log.e(TAG, "❌ Error dispatching SMS for processing: ${e.message}", e)
+                finishOnce()
             }
 
         } catch (e: Exception) {
@@ -55,7 +89,7 @@ class SmsBroadcastReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun processSmsMessage(context: Context?, message: SmsMessage) {
+    private fun processSmsMessage(context: Context, message: SmsMessage, onComplete: () -> Unit) {
         val sender = message.displayOriginatingAddress ?: ""
         val body = message.messageBody ?: ""
         val timestamp = message.timestampMillis
@@ -64,7 +98,6 @@ class SmsBroadcastReceiver : BroadcastReceiver() {
         Log.d(TAG, "📨 Sender: $sender")
         Log.d(TAG, "📨 Body preview: ${body.take(100)}...")
 
-        if (context == null) return
-        handleIncomingSms(context, scope, smsProcessor, transactionReviewService, sender, body, timestamp)
+        handleIncomingSms(context, scope, smsProcessor, transactionReviewService, sender, body, timestamp, onComplete)
     }
 }

@@ -185,9 +185,9 @@ class PdfImportViewModel @Inject constructor(
                 }
 
                 val categoryId = if (prediction != null && prediction.confidence >= 0.6) {
-                    getCategoryIdByName(prediction.category) ?: 1L
+                    getCategoryIdByName(prediction.category) ?: getCategoryIdByName("Other") ?: 0L
                 } else {
-                    1L // Default category if confidence too low
+                    getCategoryIdByName("Other") ?: 0L // Uncategorized if confidence too low
                 }
 
                 val needsReview = prediction == null || prediction.confidence < 0.9
@@ -225,32 +225,10 @@ class PdfImportViewModel @Inject constructor(
 
     private suspend fun getCategoryIdByName(categoryName: String): Long? {
         return try {
-            val categories = categoryRepository.getAllCategories().first()
-            // Map ML model category names to app category names
-            val mappedName = mapMlCategoryToAppCategory(categoryName)
-            categories.find { it.name.equals(mappedName, ignoreCase = true) }?.id
+            com.letstrack.app.domain.model.resolveCategoryId(categoryRepository, categoryName)
         } catch (e: Exception) {
             Log.e(TAG, "Error getting category ID for '$categoryName': ${e.message}")
             null
-        }
-    }
-
-    /**
-     * Map ML model category names to app category names
-     * ML Model: Bills, Entertainment, Food, Groceries, Income, Medical, Shopping, Transport
-     * App: Food, Bills & Utilities, etc.
-     */
-    private fun mapMlCategoryToAppCategory(mlCategory: String): String {
-        return when (mlCategory) {
-            "Food" -> "Food"
-            "Bills" -> "Bills & Utilities"
-            "Medical" -> "Health & Fitness"
-            "Groceries" -> "Food" // Groceries is a subcategory
-            "Income" -> "Other" // Income not in default categories, map to Other
-            "Entertainment" -> "Entertainment"
-            "Shopping" -> "Shopping"
-            "Transport" -> "Transportation"
-            else -> "Other" // Fallback to Other for unknown categories
         }
     }
 

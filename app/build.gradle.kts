@@ -25,10 +25,10 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("../letstrack-release.keystore")
-            storePassword = "android123"
-            keyAlias = "letstrack"
-            keyPassword = "android123"
+            storeFile = file("../lets-track-keystore.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD")
+            keyAlias = "lets-track-key"
+            keyPassword = System.getenv("KEY_PASSWORD")
         }
     }
 
@@ -113,7 +113,7 @@ dependencies {
     implementation("com.patrykandpatrick.vico:compose:1.15.0")
     implementation("com.patrykandpatrick.vico:compose-m3:1.15.0")
     implementation("com.patrykandpatrick.vico:core:1.15.0")
-    
+
     // Coil for image loading (for category icons if needed)
     implementation("io.coil-kt:coil-compose:2.6.0")
 

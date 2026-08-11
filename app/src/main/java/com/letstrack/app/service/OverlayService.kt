@@ -13,8 +13,17 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -30,7 +39,9 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.letstrack.app.R
 import com.letstrack.app.domain.model.PendingTransaction
 import com.letstrack.app.domain.repository.CategoryRepository
-import com.letstrack.app.ui.overlay.SystemOverlayCard
+import com.letstrack.app.ui.overlay.OverlayCardTheme
+import com.letstrack.app.ui.overlay.TransactionReviewForm
+import com.letstrack.app.ui.overlay.defaultOverlayCategories
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +77,16 @@ class OverlayService : Service() {
     private var currentTransactionId: Long? = null // Track currently displayed transaction
     private var overlayParams: WindowManager.LayoutParams? = null
 
+    // showOverlay() reliably gets called twice in quick succession for the same transaction:
+    // handleIncomingSms's pre-start AND TransactionReviewService.showReview()'s own
+    // startForegroundService() call both trigger onStartCommand(), which calls showOverlay()
+    // again if a transaction is already pending. The old duplicate-guard checked
+    // `currentTransactionId == id && composeView != null` - but composeView is only set at the
+    // very end, after category/theme lookups that suspend - so a second call arriving *during*
+    // that window sailed straight past the guard and built a second, competing view. Set this
+    // synchronously, before any suspending work, so the second call is caught immediately.
+    private var inFlightTransactionId: Long? = null
+
     companion object {
         private const val TAG = "OverlayService"
         private const val NOTIFICATION_ID = 1001
@@ -91,8 +112,13 @@ class OverlayService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
 
+        // Watches systemOverlayTransaction specifically (a single real-time slot), NOT the
+        // in-app backlog queue (pendingTransactions/pendingTransaction) - see that flow's doc
+        // comment. Watching the queue here used to mean that after acting on one card, the
+        // *next* backlogged transaction would automatically pop up outside the app too, i.e.
+        // exactly the "multiple overlays outside the app" behavior that shouldn't happen.
         scope.launch {
-            transactionReviewService.pendingTransaction.collectLatest { transaction ->
+            transactionReviewService.systemOverlayTransaction.collectLatest { transaction ->
                 if (transaction != null) {
                     Log.d(TAG, "🎯 Showing system overlay for: ${transaction.merchantName}")
                     showOverlay(transaction)
@@ -135,8 +161,8 @@ class OverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "🎯 OverlayService started, flags=$flags")
 
-        // Check if transaction is already pending (from the Flow)
-        val pendingTransaction = transactionReviewService.pendingTransaction.value
+        // Check if a real-time transaction is already pending (from the Flow)
+        val pendingTransaction = transactionReviewService.systemOverlayTransaction.value
         if (pendingTransaction != null) {
             Log.d(TAG, "🎯 Transaction available immediately - showing overlay")
             scope.launch { showOverlay(pendingTransaction) }
@@ -150,14 +176,20 @@ class OverlayService : Service() {
     private suspend fun showOverlay(transaction: PendingTransaction) {
         Log.d(TAG, "📱 showOverlay called for: ${transaction.merchantName}, ₹${transaction.amount}")
 
-        // Skip if already showing this transaction
-        if (currentTransactionId == transaction.expenseId && composeView != null) {
-            Log.d(TAG, "⚠️ Already showing this transaction, skipping duplicate")
+        // Skip if already showing this transaction, OR already in the middle of building its
+        // view (see inFlightTransactionId's doc comment for why the composeView check alone
+        // isn't enough to catch the second of two near-simultaneous calls).
+        if ((currentTransactionId == transaction.expenseId && composeView != null) ||
+            inFlightTransactionId == transaction.expenseId
+        ) {
+            Log.d(TAG, "⚠️ Already showing/building this transaction, skipping duplicate")
             return
         }
+        inFlightTransactionId = transaction.expenseId
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             Log.e(TAG, "❌ No overlay permission! Please enable 'Display over other apps' in settings.")
+            inFlightTransactionId = null
             return
         }
 
@@ -170,20 +202,24 @@ class OverlayService : Service() {
             emptyList()
         }
 
-        // Match whatever accent color the user picked in Settings so the overlay feels like
-        // part of the same app instead of a hardcoded blue-on-grey card.
-        val accentPrimary = try {
+        // Match whatever accent color (and, via OverlayCardTheme, the real light/dark ColorScheme)
+        // the user picked in Settings, so the overlay actually looks like the rest of the app
+        // instead of a hardcoded palette.
+        val accentTheme = try {
             val stored = dataStore.data.first()[androidx.datastore.preferences.core.stringPreferencesKey("accent_theme")]
-            (stored?.let { runCatching { com.letstrack.app.ui.theme.AccentTheme.valueOf(it) }.getOrNull() }
-                ?: com.letstrack.app.ui.theme.AccentTheme.GREEN).coreAccent
+            stored?.let { runCatching { com.letstrack.app.ui.theme.AccentTheme.valueOf(it) }.getOrNull() }
+                ?: com.letstrack.app.ui.theme.AccentTheme.GREEN
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read accent theme, defaulting to green: ${e.message}")
-            com.letstrack.app.ui.theme.AccentTheme.GREEN.coreAccent
+            com.letstrack.app.ui.theme.AccentTheme.GREEN
         }
 
         hideOverlay()
 
         currentTransactionId = transaction.expenseId
+        // Committed to showing this one now - the currentTransactionId+composeView check a few
+        // lines up covers duplicate-detection from here on, once composeView is set below.
+        inFlightTransactionId = null
 
         val lifecycleOwner = OverlayLifecycleOwner().apply {
             performRestore(null)
@@ -201,12 +237,20 @@ class OverlayService : Service() {
                 val showSuccess = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
                 val successMsg = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
 
-                OverlayTheme {
-                    SystemOverlayCard(
+                OverlayCardTheme(accentTheme) {
+                    val cardShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.75f)
+                            .shadow(elevation = 24.dp, shape = cardShape),
+                        shape = cardShape,
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                    TransactionReviewForm(
                         transaction = transaction,
-                        accentPrimary = accentPrimary,
                         availableCategories = categoryNames.ifEmpty { null }
-                            ?: com.letstrack.app.ui.overlay.defaultOverlayCategories,
+                            ?: defaultOverlayCategories,
                         showSuccessMessage = showSuccess.value,
                         successMessage = successMsg.value,
                         onConfirm = { category, subCategory, notes ->
@@ -215,6 +259,10 @@ class OverlayService : Service() {
                                 successMsg.value = "✓ Saved: ${transaction.merchantName} → $category"
                                 showSuccess.value = true
 
+                                // confirmTransaction() clears this card from the system overlay
+                                // slot (and the in-app backlog) once done. The system overlay
+                                // never auto-advances to a *different*, older backlog item -
+                                // only a genuinely new real-time transaction shows up here next.
                                 transactionReviewService.confirmTransaction(
                                     transaction,
                                     category,
@@ -222,22 +270,25 @@ class OverlayService : Service() {
                                     notes
                                 )
 
-                                // Wait for toast to show, then dismiss
+                                // Let the success message be visible briefly before the card
+                                // disappears.
                                 kotlinx.coroutines.delay(1000)
-                                transactionReviewService.dismissReview()
-                            }
-                        },
-                        onSkip = {
-                            scope.launch {
-                                transactionReviewService.rejectTransaction(transaction)
-                                transactionReviewService.dismissReview()
                             }
                         },
                         onDismiss = {
-                            transactionReviewService.dismissReview()
+                            // The one way to close a card without confirming - guarantees it's
+                            // flagged needsReview (findable later in Notifications and as an
+                            // in-app stack card), then just hides this one card outside the app,
+                            // without pulling up a different, older backlog item to replace it.
+                            // Used to have a separate "Skip" button wired to the exact same
+                            // outcome as this; collapsed since they never differed in practice.
+                            scope.launch {
+                                transactionReviewService.dismissSystemOverlayCard()
+                            }
                         },
                         onEditingChanged = { isEditing -> setOverlayFocusable(isEditing) }
                     )
+                    }
                 }
             }
         }
@@ -335,18 +386,6 @@ class OverlayService : Service() {
     }
 }
 
-/**
- * Minimal MaterialTheme wrapper for the overlay. Deliberately doesn't reuse
- * LetsTrackTheme, which touches the hosting Activity's window (status bar color) -
- * this view is hosted by a Service, not an Activity, so there is no such window.
- */
-@Composable
-private fun OverlayTheme(content: @Composable () -> Unit) {
-    androidx.compose.material3.MaterialTheme(
-        colorScheme = androidx.compose.material3.darkColorScheme(),
-        content = content
-    )
-}
 
 private class OverlayLifecycleOwner : LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)

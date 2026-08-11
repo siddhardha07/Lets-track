@@ -2,8 +2,10 @@ package com.letstrack.app.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.letstrack.app.domain.model.BankAccount
 import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
+import com.letstrack.app.domain.repository.BankAccountRepository
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
 import com.letstrack.app.ui.components.DateRange
@@ -64,7 +66,8 @@ private fun chartGranularityForSpan(spanDays: Int): ChartLabelStyle = when {
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val bankAccountRepository: BankAccountRepository
 ) : ViewModel() {
 
     private val _expenses = MutableStateFlow<List<Expense>>(emptyList())
@@ -85,8 +88,26 @@ class HomeViewModel @Inject constructor(
     private val _transactionType = MutableStateFlow<String?>(null) // null = all, "income", "expense"
     val transactionType: StateFlow<String?> = _transactionType.asStateFlow()
 
-    // Filtered expenses based on all filters
-    val filteredExpenses: StateFlow<List<Expense>> = combine(
+    val bankAccounts: StateFlow<List<BankAccount>> = bankAccountRepository.getAllActiveAccounts()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _selectedAccountIds = MutableStateFlow<Set<Long>>(emptySet())
+    val selectedAccountIds: StateFlow<Set<Long>> = _selectedAccountIds.asStateFlow()
+
+    fun toggleAccountFilter(accountId: Long) {
+        val current = _selectedAccountIds.value.toMutableSet()
+        if (!current.add(accountId)) current.remove(accountId)
+        _selectedAccountIds.value = current
+    }
+
+    fun clearAccountFilter() {
+        _selectedAccountIds.value = emptySet()
+    }
+
+    // Time/category/type filters, before the account filter is applied. Kept as a separate
+    // private stage rather than adding a 6th flow to the combine() below (which would need the
+    // array-based overload) - lower-risk than restructuring the existing block.
+    private val filteredExpensesBeforeAccountFilter: StateFlow<List<Expense>> = combine(
         _expenses,
         _timeFilter,
         _customDateRange,
@@ -176,6 +197,22 @@ class HomeViewModel @Inject constructor(
         }
         
         filtered
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Matches SmsProcessor.findMatchingAccount's own logic (suffix match either direction,
+    // since bankReference may be a full or masked account number depending on the source).
+    val filteredExpenses: StateFlow<List<Expense>> = combine(
+        filteredExpensesBeforeAccountFilter,
+        _selectedAccountIds,
+        bankAccounts
+    ) { expenses, selectedIds, accounts ->
+        if (selectedIds.isEmpty()) return@combine expenses
+        val selectedAccountNumbers = accounts.filter { it.id in selectedIds }.map { it.accountNumber }
+        expenses.filter { expense ->
+            expense.bankReference.isNotBlank() && selectedAccountNumbers.any { acctNum ->
+                expense.bankReference.endsWith(acctNum) || acctNum.endsWith(expense.bankReference)
+            }
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Category spending breakdown

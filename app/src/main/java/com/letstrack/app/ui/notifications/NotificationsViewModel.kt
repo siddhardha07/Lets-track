@@ -6,17 +6,20 @@ import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
+import com.letstrack.app.service.TransactionReviewService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class NotificationsViewModel @Inject constructor(
     expenseRepository: ExpenseRepository,
-    categoryRepository: CategoryRepository
+    categoryRepository: CategoryRepository,
+    private val transactionReviewService: TransactionReviewService
 ) : ViewModel() {
 
     val categories: StateFlow<List<Category>> = categoryRepository.getAllCategories()
@@ -27,4 +30,13 @@ class NotificationsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun getCategoryById(categoryId: Long?): Category? = categories.value.find { it.id == categoryId }
+
+    /** Opens the interactive review stack (confirm/skip/Clear all) for everything currently
+     *  needing review - an explicit action from the "Review all" button, not something that
+     *  happens automatically just from opening the app. */
+    fun reviewAllNow() {
+        viewModelScope.launch {
+            transactionReviewService.showPendingReviewStack()
+        }
+    }
 }

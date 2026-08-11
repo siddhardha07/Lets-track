@@ -32,6 +32,39 @@ class SmartCategorizer @Inject constructor(
     companion object {
         private const val TAG = "SmartCategorizer"
         private const val LEARNED_CONFIDENCE_THRESHOLD = 0.85
+        // Below this, a string is too short/generic to safely fuzzy-match (e.g. matching on
+        // "OLA" shouldn't also catch some unrelated merchant that happens to start with it).
+        private const val MIN_FUZZY_MATCH_LENGTH = 4
+    }
+
+    /**
+     * Finds a known merchant, exact match first, then a fuzzy prefix match for cases like a
+     * bank SMS extracting "AMAZON PAY" or "AMAZON PAY INDIA PVT LTD" for a DB entry of just
+     * "AMAZON" - or the reverse, an extraction truncated to "AMAZON P" against a longer DB
+     * entry. A plain substring/prefix check alone would also match unrelated merchants that
+     * happen to share a prefix (e.g. "AMAZONAS"), so this requires a word boundary right after
+     * the shorter string - the next character must not be a letter or digit - before trusting
+     * a fuzzy candidate.
+     */
+    private suspend fun findKnownMerchant(normalizedMerchant: String): MerchantCategoryEntity? {
+        merchantCategoryDao.getMerchant(normalizedMerchant)?.let { return it }
+        if (normalizedMerchant.length < MIN_FUZZY_MATCH_LENGTH) return null
+
+        val candidates = merchantCategoryDao.findPrefixMatches(normalizedMerchant)
+        return candidates.firstOrNull { candidate ->
+            candidate.merchantName.length >= MIN_FUZZY_MATCH_LENGTH &&
+                (hasWordBoundaryPrefix(candidate.merchantName, normalizedMerchant) ||
+                    hasWordBoundaryPrefix(normalizedMerchant, candidate.merchantName))
+        }
+    }
+
+    /** True if [longer] starts with [shorter] and either they're equal or the very next
+     *  character in [longer] isn't a letter/digit (i.e. [shorter] ends on a real word boundary,
+     *  not mid-word). */
+    private fun hasWordBoundaryPrefix(shorter: String, longer: String): Boolean {
+        if (shorter.length > longer.length || !longer.startsWith(shorter)) return false
+        if (shorter.length == longer.length) return true
+        return !longer[shorter.length].isLetterOrDigit()
     }
 
 
@@ -50,10 +83,13 @@ class SmartCategorizer @Inject constructor(
         // Check if we've learned this merchant before (common + user's)
         val normalizedMerchant = merchantName.uppercase().trim()
         Log.d(TAG, "🔍 Looking up normalized merchant: '$normalizedMerchant'")
-        val knownMerchant = merchantCategoryDao.getMerchant(normalizedMerchant)
+        val knownMerchant = findKnownMerchant(normalizedMerchant)
         if (knownMerchant != null && knownMerchant.confidence > LEARNED_CONFIDENCE_THRESHOLD) {
-            // Update usage stats
-            merchantCategoryDao.incrementUsage(normalizedMerchant, System.currentTimeMillis())
+            // Update usage stats - against the matched entry's own stored name, not the raw
+            // input, since a fuzzy match means these can differ (e.g. "AMAZON PAY" matched
+            // "AMAZON") and incrementUsage's exact-match WHERE clause would silently touch 0
+            // rows otherwise.
+            merchantCategoryDao.incrementUsage(knownMerchant.merchantName, System.currentTimeMillis())
 
             Log.d(TAG, "✓ KNOWN merchant: $merchantName → ${knownMerchant.mainCategory} (${(knownMerchant.confidence * 100).toInt()}% confidence)")
             return@withContext CategoryPrediction(

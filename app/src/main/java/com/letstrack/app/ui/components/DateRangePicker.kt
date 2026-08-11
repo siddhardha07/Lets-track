@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -40,8 +41,18 @@ fun DateRangePicker(
     var endDateMillis by remember { mutableStateOf(selectedRange?.endDate) }
     var selectingStart by remember { mutableStateOf(true) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    // usePlatformDefaultWidth = false is required here: the platform default dialog
+    // width is narrower than what Material3's DatePicker needs for all 7 weekday
+    // columns, so without this the grid silently clips its rightmost column (every
+    // Saturday - dates 1, 8, 15, 22, 29 - never rendered, looking like missing days).
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .wrapContentHeight(),
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp

@@ -33,7 +33,20 @@ interface SmsTransactionDao {
         LIMIT 1
     """)
     suspend fun findDuplicateSms(message: String, timestamp: Long, toleranceMs: Long = 5 * 60 * 1000L): SmsTransactionEntity?
-    
+
+    // Primary dedup path: same amount debited/credited AND the same resulting account balance,
+    // within a generous time window, is as close to a certain match as two independent bank
+    // messages can get - unlike message text, neither value depends on exact wording surviving
+    // a re-send or re-scan. See SmsProcessor.processSms for when this is used vs the text-based
+    // findDuplicateSms fallback above.
+    @Query("""
+        SELECT * FROM sms_transactions
+        WHERE extractedAmount = :amount AND extractedBalance = :balance AND ABS(timestamp - :timestamp) <= :toleranceMs
+        ORDER BY ABS(timestamp - :timestamp) ASC
+        LIMIT 1
+    """)
+    suspend fun findDuplicateByAmountAndBalance(amount: Double, balance: Double, timestamp: Long, toleranceMs: Long = 24 * 60 * 60 * 1000L): SmsTransactionEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertSms(sms: SmsTransactionEntity): Long
     

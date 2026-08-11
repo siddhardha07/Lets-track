@@ -14,9 +14,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -28,6 +31,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -59,11 +63,15 @@ import com.letstrack.app.domain.model.Expense
 import com.letstrack.app.ui.components.AmountText
 import com.letstrack.app.ui.components.AppCard
 import com.letstrack.app.ui.components.CategoryAvatar
+import com.letstrack.app.ui.components.CategoryFilterChip
 import com.letstrack.app.ui.components.ConfirmationDialog
 import com.letstrack.app.ui.components.DateRangePicker
 import com.letstrack.app.ui.components.EmptyState
+import com.letstrack.app.ui.components.HideableBalance
 import com.letstrack.app.ui.components.MiniStat
+import com.letstrack.app.ui.components.PrimaryButton
 import com.letstrack.app.ui.components.SegmentedControl
+import com.letstrack.app.ui.components.TertiaryButton
 import com.letstrack.app.ui.home.formatCurrency
 import com.letstrack.app.ui.home.signedAmount
 import com.letstrack.app.ui.theme.expenseColor
@@ -98,11 +106,12 @@ fun ExpensesScreen(
     val totalCredited by viewModel.totalCredited.collectAsState()
     val totalDebited by viewModel.totalDebited.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val bankAccounts by viewModel.bankAccounts.collectAsState()
+    val selectedAccountIds by viewModel.selectedAccountIds.collectAsState()
 
     var showDatePicker by remember { mutableStateOf(false) }
     var expensePendingDelete by remember { mutableStateOf<Expense?>(null) }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
-    var balanceHidden by remember { mutableStateOf(false) }
 
     val pullState = rememberPullToRefreshState()
     LaunchedEffect(pullState.isRefreshing) {
@@ -133,8 +142,10 @@ fun ExpensesScreen(
                     totalBalance = totalBalance,
                     totalCredited = totalCredited,
                     totalDebited = totalDebited,
-                    balanceHidden = balanceHidden,
-                    onToggleBalanceHidden = { balanceHidden = !balanceHidden }
+                    accounts = bankAccounts,
+                    selectedAccountIds = selectedAccountIds,
+                    onAccountToggle = viewModel::toggleAccountFilter,
+                    onClearAccounts = viewModel::clearAccountFilter
                 )
                 SearchAndActionsRow(
                     searchQuery = searchQuery,
@@ -245,11 +256,14 @@ private fun ExpensesHeroCard(
     totalBalance: Double,
     totalCredited: Double,
     totalDebited: Double,
-    balanceHidden: Boolean,
-    onToggleBalanceHidden: () -> Unit
+    accounts: List<com.letstrack.app.domain.model.BankAccount> = emptyList(),
+    selectedAccountIds: Set<Long> = emptySet(),
+    onAccountToggle: (Long) -> Unit = {},
+    onClearAccounts: () -> Unit = {}
 ) {
     val quickFilters = listOf(DateFilter.ALL, DateFilter.YEAR, DateFilter.MONTH, DateFilter.DAY)
     val primary = MaterialTheme.colorScheme.primary
+    var showAccountMenu by remember { mutableStateOf(false) }
     AppCard(
         backgroundBrush = heroCardBrush(primary),
         borderColor = heroCardBorderColor(),
@@ -263,6 +277,15 @@ private fun ExpensesHeroCard(
                 label = { it.shortLabel() },
                 modifier = Modifier.weight(1f)
             )
+            if (accounts.isNotEmpty()) {
+                IconButton(onClick = { showAccountMenu = true }) {
+                    Icon(
+                        Icons.Filled.AccountBalance,
+                        contentDescription = "Filter by account",
+                        tint = if (selectedAccountIds.isNotEmpty()) primary else LocalContentColor.current
+                    )
+                }
+            }
             IconButton(onClick = onOpenCustomRange) {
                 Icon(Icons.Filled.CalendarMonth, contentDescription = "Custom date range")
             }
@@ -270,45 +293,81 @@ private fun ExpensesHeroCard(
 
         Spacer(Modifier.height(Spacing.lg))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Current balance",
-                style = MaterialTheme.typography.labelLarge,
-                color = LocalContentColor.current.copy(alpha = 0.7f)
-            )
-            IconButton(onClick = onToggleBalanceHidden, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    imageVector = if (balanceHidden) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                    contentDescription = if (balanceHidden) "Show balance" else "Hide balance",
-                    tint = LocalContentColor.current.copy(alpha = 0.7f),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-        if (balanceHidden) {
-            Text(
-                text = "•••••••",
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold
-            )
-        } else {
-            AmountText(
-                amount = totalBalance,
-                style = MaterialTheme.typography.displaySmall,
-                showIcon = false,
-                positiveColor = primary
-            )
-        }
+        Text(
+            text = "Current balance",
+            style = MaterialTheme.typography.labelLarge,
+            color = LocalContentColor.current.copy(alpha = 0.7f)
+        )
+        // Hidden by default, tap to reveal, auto-hides again a few seconds later -- see
+        // HideableBalance. Used to be a manual show/hide toggle that defaulted to visible,
+        // which is backwards for a number you generally want masked until you ask for it.
+        HideableBalance(
+            amount = totalBalance,
+            style = MaterialTheme.typography.displaySmall,
+            showIcon = false,
+            positiveColor = primary
+        )
 
         Spacer(Modifier.height(Spacing.lg))
 
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xl)) {
             MiniStat(label = "Credited", value = formatCurrency(totalCredited), color = incomeColor(), icon = Icons.Filled.ArrowUpward)
             MiniStat(label = "Debited", value = formatCurrency(totalDebited), color = expenseColor(), icon = Icons.Filled.ArrowDownward)
+        }
+    }
+
+    if (showAccountMenu) {
+        AccountFilterSheet(
+            accounts = accounts,
+            selectedAccountIds = selectedAccountIds,
+            onAccountToggle = onAccountToggle,
+            onClearAccounts = onClearAccounts,
+            onDismiss = { showAccountMenu = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AccountFilterSheet(
+    accounts: List<com.letstrack.app.domain.model.BankAccount>,
+    selectedAccountIds: Set<Long>,
+    onAccountToggle: (Long) -> Unit,
+    onClearAccounts: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    // Used to be a plain Material3 DropdownMenu with checkboxes - visually out of step with
+    // the rest of the app's own filter sheets (Home's Filters sheet uses this exact
+    // AppCard/CategoryFilterChip look for its own Accounts section). Matching that here instead.
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(Spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(Spacing.lg)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Filter by account", style = MaterialTheme.typography.titleLarge)
+                if (selectedAccountIds.isNotEmpty()) {
+                    TertiaryButton(text = "Clear", onClick = onClearAccounts)
+                }
+            }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                items(accounts, key = { it.id }) { account ->
+                    CategoryFilterChip(
+                        label = account.accountNickname.ifBlank { account.bankName },
+                        accent = MaterialTheme.colorScheme.primary,
+                        selected = account.id in selectedAccountIds,
+                        onClick = { onAccountToggle(account.id) }
+                    )
+                }
+            }
+            PrimaryButton(text = "Done", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
         }
     }
 }

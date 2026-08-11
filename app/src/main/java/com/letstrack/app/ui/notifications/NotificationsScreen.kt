@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -83,6 +84,18 @@ fun NotificationsScreen(
                 contentPadding = PaddingValues(Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
+                item {
+                    // Explicit action, not something that pops up on its own when the app opens
+                    // (that used to happen automatically and was reported as intrusive) - tap
+                    // this to go through everything needing review one at a time, with a
+                    // "Clear all" option if you'd rather not.
+                    Button(
+                        onClick = { viewModel.reviewAllNow() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Review ${transactions.size} transaction${if (transactions.size == 1) "" else "s"} now")
+                    }
+                }
                 items(transactions, key = { it.id }) { expense ->
                     NeedsReviewRow(
                         expense = expense,

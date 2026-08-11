@@ -51,8 +51,26 @@ class SmsProcessor @Inject constructor(
         try {
             Log.d(TAG, "Processing SMS from $sender at $timestamp")
 
-            // Check for duplicate - but allow re-import if the expense was deleted
-            val existingSms = smsTransactionDao.findDuplicateSms(message, timestamp)
+            // Parse the SMS - needed before dedup now, since amount+balance is the primary
+            // dedup signal (see below).
+            val parsed = smsParser.parseSms(message, sender)
+
+            // Check for duplicate - but allow re-import if the expense was deleted.
+            //
+            // Matching on (amount, resulting balance) instead of message text: two distinct
+            // real transactions landing on the exact same amount AND leaving the account at
+            // the exact same balance is practically impossible, whereas matching on the raw
+            // message text breaks the moment a bank tweaks wording/whitespace between two
+            // otherwise-identical re-sends, or a re-scan reads the message back slightly
+            // differently than the live broadcast did. Falls back to the old message+timestamp
+            // check only when a message doesn't carry a balance (e.g. some credit alerts don't
+            // mention one), since amount alone isn't a safe dedup key on its own - plenty of
+            // unrelated transactions share the same amount.
+            val existingSms = if (parsed.amount != null && parsed.balance != null) {
+                smsTransactionDao.findDuplicateByAmountAndBalance(parsed.amount, parsed.balance, timestamp)
+            } else {
+                smsTransactionDao.findDuplicateSms(message, timestamp)
+            }
             if (existingSms != null && existingSms.isMatched) {
                 // Check if the matched expense still exists
                 val expenseExists = existingSms.matchedExpenseId?.let { expenseId ->
@@ -67,9 +85,6 @@ class SmsProcessor @Inject constructor(
                     // Continue processing to create new expense
                 }
             }
-
-            // Parse the SMS
-            val parsed = smsParser.parseSms(message, sender)
 
             // Check if we have a matching bank account
             val matchingAccount = findMatchingAccount(sender, parsed.accountNumber)
@@ -148,8 +163,15 @@ class SmsProcessor @Inject constructor(
 
             Log.d(TAG, "AI Prediction: ${prediction.category} (${(prediction.confidence * 100).toInt()}% confidence)")
 
-            // Look up category ID by name
-            val categoryId = getCategoryIdByName(prediction.category) ?: 1L
+            // Look up category ID by name. Falling back to a hardcoded id (previously 1L,
+            // i.e. always "Food" regardless of what the message actually was) meant any
+            // lookup miss silently mis-categorized the expense. Fall back to "Other" by
+            // name instead, and only as a last resort to whatever category happens to
+            // exist first - never to a magic number that may not even exist.
+            val categoryId = getCategoryIdByName(prediction.category)
+                ?: getCategoryIdByName("Other")
+                ?: categoryRepository.getAllCategories().first().firstOrNull()?.id
+                ?: 0L
 
             // Create expense entity with AI prediction
             val expenseEntity = ExpenseEntity(
@@ -301,32 +323,10 @@ class SmsProcessor @Inject constructor(
      */
     private suspend fun getCategoryIdByName(categoryName: String): Long? {
         return try {
-            val categories = categoryRepository.getAllCategories().first()
-            // Map ML model category names to app category names
-            val mappedName = mapMlCategoryToAppCategory(categoryName)
-            categories.find { it.name.equals(mappedName, ignoreCase = true) }?.id
+            com.letstrack.app.domain.model.resolveCategoryId(categoryRepository, categoryName)
         } catch (e: Exception) {
             Log.e(TAG, "Error getting category ID for '$categoryName': ${e.message}")
             null
-        }
-    }
-
-    /**
-     * Map ML model category names to app category names
-     * ML Model: Bills, Entertainment, Food, Groceries, Income, Medical, Shopping, Transport
-     * App: Food, Bills & Utilities, etc.
-     */
-    private fun mapMlCategoryToAppCategory(mlCategory: String): String {
-        return when (mlCategory) {
-            "Food" -> "Food"
-            "Bills" -> "Bills & Utilities"
-            "Medical" -> "Health & Fitness"
-            "Groceries" -> "Food" // Groceries is a subcategory
-            "Income" -> "Other" // Income not in default categories, map to Other
-            "Entertainment" -> "Entertainment"
-            "Shopping" -> "Shopping"
-            "Transport" -> "Transportation"
-            else -> "Other" // Fallback to Other for unknown categories
         }
     }
 }

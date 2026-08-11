@@ -372,19 +372,57 @@ fun MainNavigation(
             onCsvClick = {
                 showAddBottomSheet = false
                 navController.navigate("csv_import")
+            },
+            onJsonClick = {
+                showAddBottomSheet = false
+                // Same screen "Import PDF" uses - it already supports JSON as its
+                // primary/recommended option, this just gives JSON its own visible
+                // entry point instead of being hidden inside the PDF flow.
+                navController.navigate("pdf_import")
             }
         )
     }
 
     // Global Transaction Review Overlay (AI Categorization) - OUTSIDE Scaffold
     val pendingTransaction by transactionReviewService.pendingTransaction.collectAsState()
+    val pendingCount by transactionReviewService.pendingCount.collectAsState()
     val isVisible by transactionReviewService.isOverlayVisible.collectAsState()
     val coroutineScope = rememberCoroutineScope()
+
+    // On app start, backfill the queue with anything the DB already has flagged needsReview
+    // but that isn't in the in-memory queue yet - covers transactions that were saved while the
+    // process was dead (battery saver, OEM background limits) and so never got a chance to be
+    // enqueued via showReview().
+    LaunchedEffect(Unit) {
+        transactionReviewService.seedQueueFromDatabase()
+    }
+
+    // The system overlay window draws independently of app focus, so opening the app doesn't
+    // automatically dismiss a system-overlay card that was already showing - it just sits on
+    // top of the in-app stack view underneath, making the count/"Clear all" UI invisible even
+    // though it's there. Every ON_RESUME (app opened or returned to), hand off to the in-app
+    // view instead.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> transactionReviewService.onAppForegrounded()
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> transactionReviewService.onAppBackgrounded()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     TransactionReviewOverlay(
         pendingTransaction = pendingTransaction,
         isVisible = isVisible,
+        pendingCount = pendingCount,
         onConfirm = { category, subCategory ->
+            // confirmTransaction() pops this one off the queue and advances to the next
+            // (or hides the overlay if none remain) - no separate dismissReview() call needed,
+            // and calling one here would wrongly wipe everything still queued behind it.
             pendingTransaction?.let { transaction ->
                 coroutineScope.launch {
                     transactionReviewService.confirmTransaction(
@@ -394,26 +432,20 @@ fun MainNavigation(
                     )
                 }
             }
-            transactionReviewService.dismissReview()
-        },
-        onReject = {
-            pendingTransaction?.let { transaction ->
-                coroutineScope.launch {
-                    transactionReviewService.rejectTransaction(transaction)
-                }
-            }
-            transactionReviewService.dismissReview()
-        },
-        onReviewLater = {
-            pendingTransaction?.let { transaction ->
-                coroutineScope.launch {
-                    transactionReviewService.rejectTransaction(transaction)
-                }
-            }
-            transactionReviewService.dismissReview()
         },
         onDismiss = {
-            transactionReviewService.dismissReview()
+            // The one way to close a card without confirming - guarantees it's flagged
+            // needsReview and moves the stack along, rather than clearing everything queued
+            // behind it. Used to have separate "No"/"Review Later" buttons wired to the exact
+            // same underlying call as this; collapsed since they never differed in practice.
+            coroutineScope.launch {
+                transactionReviewService.skipCurrentToReview()
+            }
+        },
+        onClearAll = {
+            coroutineScope.launch {
+                transactionReviewService.clearAllToReview()
+            }
         }
     )
     } // End of Box

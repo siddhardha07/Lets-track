@@ -23,7 +23,12 @@ import androidx.core.view.WindowCompat
  * dark/light surfaces") per the dark-UI guidance this palette follows -- a flat neutral grey
  * everywhere would lose the accent identity outside of primary-colored elements.
  */
-private fun buildColorScheme(accent: AccentTheme, darkTheme: Boolean): ColorScheme {
+// Was private - the system overlay (OverlayService, a bare Service with no Activity) couldn't
+// use LetsTrackTheme below since it touches Activity-only APIs (window.statusBarColor), so it
+// hand-rolled its own hardcoded dark palette instead of ever getting the user's actual accent
+// color or light/dark preference. Exposed so OverlayCardTheme (ui/overlay/OverlayCardTheme.kt)
+// can build the real ColorScheme without needing an Activity.
+fun buildColorScheme(accent: AccentTheme, darkTheme: Boolean): ColorScheme {
     return if (darkTheme) {
         darkColorScheme(
             primary = accent.coreAccent,

@@ -65,6 +65,7 @@ import com.letstrack.app.ui.components.CategoryFilterChip
 import com.letstrack.app.ui.components.DateRange
 import com.letstrack.app.ui.components.DateRangePicker
 import com.letstrack.app.ui.components.EmptyState
+import com.letstrack.app.ui.components.HideableBalance
 import com.letstrack.app.ui.components.MiniStat
 import com.letstrack.app.ui.components.PrimaryButton
 import com.letstrack.app.ui.components.SectionHeader
@@ -103,6 +104,8 @@ fun HomeScreen(
     val timeFilter by viewModel.timeFilter.collectAsState()
     val selectedCategories by viewModel.selectedCategories.collectAsState()
     val transactionType by viewModel.transactionType.collectAsState()
+    val bankAccounts by viewModel.bankAccounts.collectAsState()
+    val selectedAccountIds by viewModel.selectedAccountIds.collectAsState()
     val filteredExpenses by viewModel.filteredExpenses.collectAsState()
     val needsReviewCount by viewModel.needsReviewCount.collectAsState()
     val chartLabelStyle by viewModel.chartLabelStyle.collectAsState()
@@ -224,9 +227,13 @@ fun HomeScreen(
             categories = categories,
             selectedCategories = selectedCategories,
             transactionType = transactionType,
+            accounts = bankAccounts,
+            selectedAccountIds = selectedAccountIds,
             onCategoryToggle = viewModel::toggleCategoryFilter,
             onClearCategories = viewModel::clearCategoryFilters,
             onTransactionTypeChange = viewModel::setTransactionType,
+            onAccountToggle = viewModel::toggleAccountFilter,
+            onClearAccounts = viewModel::clearAccountFilter,
             onDismiss = { showFilterSheet = false }
         )
     }
@@ -369,7 +376,10 @@ private fun HeroBalanceCard(
     onOpenCustomRange: () -> Unit,
     onOpenFilters: () -> Unit
 ) {
-    val quickFilters = listOf(TimeFilter.TODAY, TimeFilter.THIS_WEEK, TimeFilter.THIS_MONTH, TimeFilter.LAST_30_DAYS, TimeFilter.THIS_YEAR)
+    // LAST_30_DAYS used to sit here labeled "30D", but it produced a range that was
+    // functionally indistinguishable from THIS_MONTH ("Month") most of the time, making
+    // both chips redundant. Swapped for LAST_90_DAYS ("3M") to actually add a distinct range.
+    val quickFilters = listOf(TimeFilter.TODAY, TimeFilter.THIS_WEEK, TimeFilter.THIS_MONTH, TimeFilter.LAST_90_DAYS, TimeFilter.THIS_YEAR)
     val primary = MaterialTheme.colorScheme.primary
     AppCard(
         backgroundBrush = heroCardBrush(primary),
@@ -399,7 +409,7 @@ private fun HeroBalanceCard(
             style = MaterialTheme.typography.labelLarge,
             color = LocalContentColor.current.copy(alpha = 0.7f)
         )
-        AmountText(
+        HideableBalance(
             amount = metrics.netBalance,
             style = MaterialTheme.typography.displaySmall,
             showIcon = false,
@@ -419,7 +429,7 @@ private fun TimeFilter.shortLabel(): String = when (this) {
     TimeFilter.TODAY -> "Today"
     TimeFilter.THIS_WEEK -> "Week"
     TimeFilter.THIS_MONTH -> "Month"
-    TimeFilter.LAST_30_DAYS -> "30D"
+    TimeFilter.LAST_90_DAYS -> "3M"
     TimeFilter.THIS_YEAR -> "Year"
     else -> "Custom"
 }
@@ -640,9 +650,13 @@ private fun FilterBottomSheet(
     categories: List<Category>,
     selectedCategories: Set<Long>,
     transactionType: String?,
+    accounts: List<com.letstrack.app.domain.model.BankAccount>,
+    selectedAccountIds: Set<Long>,
     onCategoryToggle: (Long) -> Unit,
     onClearCategories: () -> Unit,
     onTransactionTypeChange: (String?) -> Unit,
+    onAccountToggle: (Long) -> Unit,
+    onClearAccounts: () -> Unit,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -698,6 +712,31 @@ private fun FilterBottomSheet(
                             selected = category.id in selectedCategories,
                             onClick = { onCategoryToggle(category.id) }
                         )
+                    }
+                }
+            }
+
+            if (accounts.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Accounts", style = MaterialTheme.typography.titleSmall)
+                        if (selectedAccountIds.isNotEmpty()) {
+                            TertiaryButton(text = "Clear", onClick = onClearAccounts)
+                        }
+                    }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        items(accounts, key = { it.id }) { account ->
+                            CategoryFilterChip(
+                                label = account.accountNickname.ifBlank { account.bankName },
+                                accent = MaterialTheme.colorScheme.primary,
+                                selected = account.id in selectedAccountIds,
+                                onClick = { onAccountToggle(account.id) }
+                            )
+                        }
                     }
                 }
             }

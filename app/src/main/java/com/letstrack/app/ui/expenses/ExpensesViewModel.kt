@@ -5,8 +5,10 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.letstrack.app.data.importer.JsonImporter
+import com.letstrack.app.domain.model.BankAccount
 import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
+import com.letstrack.app.domain.repository.BankAccountRepository
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
 import com.letstrack.app.ml.SmartCategorizer
@@ -37,6 +39,7 @@ sealed class MerchantLearningStatus {
 class ExpensesViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
+    private val bankAccountRepository: BankAccountRepository,
     private val jsonImporter: JsonImporter,
     private val smartCategorizer: SmartCategorizer,
     private val smsImportService: SmsImportService,
@@ -82,8 +85,24 @@ class ExpensesViewModel @Inject constructor(
     private val _merchantLearningStatus = MutableStateFlow<MerchantLearningStatus>(MerchantLearningStatus.Idle)
     val merchantLearningStatus: StateFlow<MerchantLearningStatus> = _merchantLearningStatus.asStateFlow()
 
-    // Filtered expenses based on search and date
-    val filteredExpenses: StateFlow<List<Expense>> = combine(
+    val bankAccounts: StateFlow<List<BankAccount>> = bankAccountRepository.getAllActiveAccounts()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _selectedAccountIds = MutableStateFlow<Set<Long>>(emptySet())
+    val selectedAccountIds: StateFlow<Set<Long>> = _selectedAccountIds.asStateFlow()
+
+    fun toggleAccountFilter(accountId: Long) {
+        val current = _selectedAccountIds.value.toMutableSet()
+        if (!current.add(accountId)) current.remove(accountId)
+        _selectedAccountIds.value = current
+    }
+
+    fun clearAccountFilter() {
+        _selectedAccountIds.value = emptySet()
+    }
+
+    // Filtered expenses based on search and date, before the account filter is applied.
+    private val filteredExpensesBeforeAccountFilter: StateFlow<List<Expense>> = combine(
         _expenses,
         _searchQuery,
         _dateFilter,
@@ -139,6 +158,20 @@ class ExpensesViewModel @Inject constructor(
                 expense.title.contains(query, ignoreCase = true) ||
                 expense.description.contains(query, ignoreCase = true) ||
                 expense.amount.toString().contains(query)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val filteredExpenses: StateFlow<List<Expense>> = combine(
+        filteredExpensesBeforeAccountFilter,
+        _selectedAccountIds,
+        bankAccounts
+    ) { expenses, selectedIds, accounts ->
+        if (selectedIds.isEmpty()) return@combine expenses
+        val selectedAccountNumbers = accounts.filter { it.id in selectedIds }.map { it.accountNumber }
+        expenses.filter { expense ->
+            expense.bankReference.isNotBlank() && selectedAccountNumbers.any { acctNum ->
+                expense.bankReference.endsWith(acctNum) || acctNum.endsWith(expense.bankReference)
             }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

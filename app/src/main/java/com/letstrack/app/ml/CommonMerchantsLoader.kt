@@ -8,6 +8,7 @@ import com.letstrack.app.data.local.dao.MerchantCategoryDao
 import com.letstrack.app.data.local.entity.MerchantCategoryEntity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,7 +27,11 @@ class CommonMerchantsLoader @Inject constructor(
         private const val TAG = "CommonMerchantsLoader"
         private const val COMMON_MERCHANTS_FILE = "common_merchants.json"
         private const val PREFS_NAME = "merchant_prefs"
-        private const val KEY_LOADED = "common_merchants_loaded"
+        // Bumped from "common_merchants_loaded" to "_v2" so installs that already ran the
+        // loader once (back when the bundled file had ~150 entries) run it again now that it
+        // has ~10,000 - the old flag would otherwise permanently skip loading the new ones.
+        // Bump again (_v3, _v4...) any time the asset file grows with genuinely new merchants.
+        private const val KEY_LOADED = "common_merchants_loaded_v2"
     }
 
     data class CommonMerchants(
@@ -58,32 +63,33 @@ class CommonMerchantsLoader @Inject constructor(
             val type = object : TypeToken<CommonMerchants>() {}.type
             val commonMerchants: CommonMerchants = Gson().fromJson(json, type)
 
-            // Insert into database
-            var count = 0
-            commonMerchants.merchants.forEach { (merchantName, data) ->
-                val entity = MerchantCategoryEntity(
-                    merchantName = merchantName.uppercase(),
+            // At ~10k entries, checking "does this exist?" one row at a time (as this used to)
+            // means ~10k individual suspend DB round-trips. Fetch the existing names once as a
+            // Set instead, filter in memory, and insert everything new in a single batched call.
+            val existingNames = merchantCategoryDao.getAllMerchants().first().map { it.merchantName }.toSet()
+            val now = System.currentTimeMillis()
+            val toInsert = commonMerchants.merchants.mapNotNull { (merchantName, data) ->
+                val upperName = merchantName.uppercase()
+                if (upperName in existingNames) return@mapNotNull null
+                MerchantCategoryEntity(
+                    merchantName = upperName,
                     mainCategory = data.category,
                     subCategory = null,
                     confidence = data.confidence,
                     source = "pre-populated",
                     lastUsed = 0,
                     usageCount = 0,
-                    createdAt = System.currentTimeMillis()
+                    createdAt = now
                 )
-
-                // Only insert if not already exists
-                val existing = merchantCategoryDao.getMerchant(merchantName.uppercase())
-                if (existing == null) {
-                    merchantCategoryDao.insert(entity)
-                    count++
-                }
+            }
+            if (toInsert.isNotEmpty()) {
+                merchantCategoryDao.insertAll(toInsert)
             }
 
             // Mark as loaded
             prefs.edit().putBoolean(KEY_LOADED, true).apply()
 
-            Log.d(TAG, "✓ Loaded $count common merchants into database")
+            Log.d(TAG, "✓ Loaded ${toInsert.size} common merchants into database (${commonMerchants.merchants.size - toInsert.size} already present, skipped)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load common merchants: ${e.message}", e)
         }

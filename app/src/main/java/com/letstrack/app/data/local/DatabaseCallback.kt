@@ -4,6 +4,7 @@ import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.letstrack.app.data.local.entity.CategoryEntity
 import com.letstrack.app.di.ApplicationScope
+import com.letstrack.app.domain.model.DefaultCategories
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -23,21 +24,18 @@ class DatabaseCallback @Inject constructor(
 
     private suspend fun populateDatabase() {
         val categoryDao = database.get().categoryDao()
-        
-        // Insert default categories
-        val defaultCategories = listOf(
-            CategoryEntity(name = "Food", icon = "🍔", color = "#FF6B6B", isDefault = true),
-            CategoryEntity(name = "Transportation", icon = "🚗", color = "#4ECDC4", isDefault = true),
-            CategoryEntity(name = "Shopping", icon = "🛍️", color = "#FFE66D", isDefault = true),
-            CategoryEntity(name = "Entertainment", icon = "🎬", color = "#A8E6CF", isDefault = true),
-            CategoryEntity(name = "Bills & Utilities", icon = "💡", color = "#FF8B94", isDefault = true),
-            CategoryEntity(name = "Health & Fitness", icon = "🏥", color = "#C7CEEA", isDefault = true),
-            CategoryEntity(name = "Education", icon = "📚", color = "#B4A7D6", isDefault = true),
-            CategoryEntity(name = "Personal Care", icon = "💇", color = "#FFDFD3", isDefault = true),
-            CategoryEntity(name = "Travel", icon = "✈️", color = "#95E1D3", isDefault = true),
-            CategoryEntity(name = "Other", icon = "📦", color = "#BDC3C7", isDefault = true)
-        )
-        
+
+        // Sourced from DefaultCategories so this list can't drift from the one
+        // LetsTrackApp's fallback seeder uses (see DefaultCategories for why that matters).
+        val defaultCategories = DefaultCategories.ALL.map { category ->
+            CategoryEntity(
+                name = category.name,
+                icon = category.icon,
+                color = category.color,
+                isDefault = true
+            )
+        }
+
         categoryDao.insertCategories(defaultCategories)
     }
 }

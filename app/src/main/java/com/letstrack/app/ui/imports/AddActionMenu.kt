@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -44,7 +45,8 @@ fun AddActionMenu(
     onDismiss: () -> Unit,
     onManualClick: () -> Unit,
     onPdfClick: () -> Unit,
-    onCsvClick: () -> Unit
+    onCsvClick: () -> Unit,
+    onJsonClick: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -74,11 +76,24 @@ fun AddActionMenu(
                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     onClick = onPdfClick
                 )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xl)) {
                 AddActionCircle(
                     icon = Icons.Filled.TableChart,
                     label = "Import CSV",
                     color = CategoryBlue,
                     onClick = onCsvClick
+                )
+                // JSON import used to only be reachable by opening "Import PDF" and picking
+                // a different button inside that screen - nobody would find it there. It's
+                // its own clearly-labeled entry point now, even though it still reuses the
+                // same underlying screen (which already handles JSON just fine).
+                AddActionCircle(
+                    icon = Icons.Filled.DataObject,
+                    label = "Import JSON",
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                    onClick = onJsonClick
                 )
             }
 

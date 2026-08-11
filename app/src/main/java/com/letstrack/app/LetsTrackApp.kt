@@ -1,10 +1,14 @@
 package com.letstrack.app
 
 import android.app.Application
+import android.content.Intent
 import android.util.Log
-import com.letstrack.app.domain.model.Category
+import androidx.core.content.ContextCompat
+import com.letstrack.app.domain.model.DefaultCategories
 import com.letstrack.app.domain.repository.CategoryRepository
 import com.letstrack.app.ml.CommonMerchantsLoader
+import com.letstrack.app.service.OverlayService
+import com.letstrack.app.sms.SmsPermissionHandler
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +30,9 @@ class LetsTrackApp : Application() {
     @Inject
     lateinit var categoryRepository: CategoryRepository
 
+    @Inject
+    lateinit var smsPermissionHandler: SmsPermissionHandler
+
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     companion object {
@@ -46,27 +53,41 @@ class LetsTrackApp : Application() {
         applicationScope.launch {
             seedDefaultCategoriesIfEmpty()
         }
+
+        startPersistentMonitoring()
+    }
+
+    /**
+     * Starts OverlayService once at app launch and never stops it reactively (see
+     * TransactionReviewService.hideOverlay and SmsIngestPipeline - both used to stopService()
+     * it whenever there was nothing to show, which meant the app spent almost all its time as
+     * a plain cached background process). Confirmed live on-device via
+     * `dumpsys activity broadcasts`: a real SMS_RECEIVED broadcast sat DEFERRED for over 2
+     * hours because the process was frozen (state:FRZ|FROZEN, reason: mBroadcastConsumerDefer-
+     * ForFrozen) - Android's own background broadcast-freezing, not anything OEM-specific.
+     * Processes holding an active foreground service are specifically exempted from that
+     * freeze, which is the actual mechanism this is relying on to keep SMS delivery prompt.
+     * Also called from BootReceiver so it resumes after a reboot without the user reopening
+     * the app first.
+     */
+    private fun startPersistentMonitoring() {
+        if (!smsPermissionHandler.hasReadSmsPermission()) {
+            Log.d(TAG, "No SMS permission yet - not starting persistent monitoring service")
+            return
+        }
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java))
+            Log.d(TAG, "✓ Started persistent OverlayService to keep the process unfrozen for SMS delivery")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start persistent OverlayService: ${e.message}", e)
+        }
     }
 
     private suspend fun seedDefaultCategoriesIfEmpty() {
         if (categoryRepository.getAllCategories().first().isNotEmpty()) return
-        val defaultCategories = listOf(
-            Category(name = "Food", icon = "🍔", color = "#FF5722"),
-            Category(name = "Shopping", icon = "🛍️", color = "#E91E63"),
-            Category(name = "Transportation", icon = "🚗", color = "#9C27B0"),
-            Category(name = "Entertainment", icon = "🎬", color = "#673AB7"),
-            Category(name = "Bills & Utilities", icon = "💡", color = "#3F51B5"),
-            Category(name = "Healthcare", icon = "🏥", color = "#2196F3"),
-            Category(name = "Education", icon = "📚", color = "#009688"),
-            Category(name = "Groceries", icon = "🛒", color = "#4CAF50"),
-            Category(name = "Personal Care", icon = "💆", color = "#8BC34A"),
-            Category(name = "Gifts & Donations", icon = "🎁", color = "#FFC107"),
-            Category(name = "Travel", icon = "✈️", color = "#FF9800"),
-            Category(name = "Other", icon = "📝", color = "#795548")
-        )
-        defaultCategories.forEach { category ->
+        DefaultCategories.ALL.forEach { category ->
             categoryRepository.insertCategory(category)
         }
-        Log.d(TAG, "✓ Seeded ${defaultCategories.size} default categories")
+        Log.d(TAG, "✓ Seeded ${DefaultCategories.ALL.size} default categories")
     }
 }

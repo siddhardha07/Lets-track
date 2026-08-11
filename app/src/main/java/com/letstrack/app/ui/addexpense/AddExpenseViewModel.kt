@@ -54,34 +54,13 @@ class AddExpenseViewModel @Inject constructor(
 
     init {
         loadCategories()
-        seedDefaultCategoriesIfEmpty()
-    }
-
-    private fun seedDefaultCategoriesIfEmpty() {
-        viewModelScope.launch {
-            categoryRepository.getAllCategories().collect { existingCategories ->
-                if (existingCategories.isEmpty()) {
-                    // Add default categories
-                    val defaultCategories = listOf(
-                        Category(name = "Food", icon = "🍔", color = "#FF5722"),
-                        Category(name = "Shopping", icon = "🛍️", color = "#E91E63"),
-                        Category(name = "Transportation", icon = "🚗", color = "#9C27B0"),
-                        Category(name = "Entertainment", icon = "🎬", color = "#673AB7"),
-                        Category(name = "Bills & Utilities", icon = "💡", color = "#3F51B5"),
-                        Category(name = "Healthcare", icon = "🏥", color = "#2196F3"),
-                        Category(name = "Education", icon = "📚", color = "#009688"),
-                        Category(name = "Groceries", icon = "🛒", color = "#4CAF50"),
-                        Category(name = "Personal Care", icon = "💆", color = "#8BC34A"),
-                        Category(name = "Gifts & Donations", icon = "🎁", color = "#FFC107"),
-                        Category(name = "Travel", icon = "✈️", color = "#FF9800"),
-                        Category(name = "Other", icon = "📝", color = "#795548")
-                    )
-                    defaultCategories.forEach { category ->
-                        categoryRepository.insertCategory(category)
-                    }
-                }
-            }
-        }
+        // Seeding now happens once at app startup (LetsTrackApp.onCreate), sourced from
+        // DefaultCategories, so it reliably runs regardless of which screen the user opens
+        // first. This ViewModel used to carry its own copy of the default list (which had
+        // drifted from the other two copies - see DefaultCategories) and kept re-seeding
+        // live via .collect{} for as long as this screen was open, which would silently
+        // undo an intentional "delete all categories" done elsewhere while this screen
+        // was still alive. Removed rather than reimplemented.
     }
 
     fun loadExpense(expenseId: Long) {

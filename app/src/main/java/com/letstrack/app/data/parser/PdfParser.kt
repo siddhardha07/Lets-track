@@ -30,12 +30,20 @@ class PdfParser(private val context: Context) {
 
             val pdfTextStripper = PDFTextStripper()
             val text = pdfTextStripper.getText(document)
-            
-            // Save extracted text for debugging
-            val debugFile = File(context.getExternalFilesDir(null), "pdf_extracted_text.txt")
-            debugFile.writeText(text)
-            android.util.Log.d("PdfParser", "Text extracted: ${text.length} chars, saved to ${debugFile.absolutePath}")
-            android.util.Log.d("PdfParser", "First 500 chars: ${text.take(500)}")
+
+            // Debug-only: dumps the full extracted statement text (account number, every
+            // transaction, balances) to a plain-text file for inspecting parse failures. This
+            // used to run unconditionally, including in release builds - real financial
+            // statement contents written to disk on every import, with nothing ever cleaning
+            // the file up. Gated behind BuildConfig.DEBUG now so it stays useful for
+            // development without ever happening on a real user's device.
+            val isDebugBuild = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+            if (isDebugBuild) {
+                val debugFile = File(context.getExternalFilesDir(null), "pdf_extracted_text.txt")
+                debugFile.writeText(text)
+                android.util.Log.d("PdfParser", "Text extracted: ${text.length} chars, saved to ${debugFile.absolutePath}")
+            }
+            android.util.Log.d("PdfParser", "Text extracted: ${text.length} chars")
             
             document.close()
             inputStream.close()
@@ -237,78 +245,6 @@ class PdfParser(private val context: Context) {
             valueDate = valueDate,
             transactionDetails = details,
             refChequeNo = "",
-            withdrawals = withdrawals,
-            deposits = deposits,
-            balance = balance,
-            amount = amount,
-            isDebit = isDebit,
-            merchantName = merchant,
-            upiId = upiId,
-            description = details
-        )
-    }
-
-    private fun parseTransactionLine(parts: List<String>): ParsedTransaction? {
-        // Expected format (varying columns):
-        // 0: Date and Time
-        // 1: Value Date  
-        // 2: Transaction Details
-        // 3: Ref/Cheque No
-        // 4: Withdrawals (if present)
-        // 5: Deposits (if present)
-        // 6: Balance
-
-        if (parts.size < 4) return null
-
-        val dateTime = parts.getOrNull(0) ?: ""
-        val valueDate = parts.getOrNull(1) ?: ""
-        var details = parts.getOrNull(2) ?: ""
-        var refNo = ""
-        var withdrawals = ""
-        var deposits = ""
-        var balance = ""
-
-        // Parse remaining parts
-        var idx = 3
-        if (idx < parts.size && !parts[idx].contains("CR") && !parts[idx].contains(".")) {
-            refNo = parts[idx]
-            idx++
-        }
-
-        // Check for withdrawals/deposits/balance
-        while (idx < parts.size) {
-            val part = parts[idx]
-            when {
-                part.endsWith("CR") && balance.isEmpty() -> balance = part
-                part.contains(".") && withdrawals.isEmpty() && !part.endsWith("CR") -> withdrawals = part
-                part.contains(".") && withdrawals.isNotEmpty() && deposits.isEmpty() -> deposits = part
-                part.contains(".") && deposits.isNotEmpty() && balance.isEmpty() -> balance = part
-                else -> {
-                    // Might be continuation of details
-                    if (details.isNotEmpty()) details += " "
-                    details += part
-                }
-            }
-            idx++
-        }
-
-        // Determine amount and type
-        val isDebit = withdrawals.isNotEmpty()
-        val amountStr = if (isDebit) withdrawals else deposits
-        val amount = try {
-            amountStr.replace(",", "").toDoubleOrNull() ?: 0.0
-        } catch (e: Exception) {
-            0.0
-        }
-
-        // Extract merchant name and UPI ID from details
-        val (merchant, upiId) = extractMerchantInfo(details)
-
-        return ParsedTransaction(
-            dateTime = dateTime,
-            valueDate = valueDate,
-            transactionDetails = details,
-            refChequeNo = refNo,
             withdrawals = withdrawals,
             deposits = deposits,
             balance = balance,

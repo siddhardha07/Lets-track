@@ -26,14 +26,6 @@ class SmsImportService @Inject constructor(
     
     companion object {
         private const val TAG = "SmsImportService"
-        
-        // Common bank SMS sender patterns to filter
-        private val BANK_SENDER_PATTERNS = listOf(
-            "VM-", "DM-", "AD-", "AX-", "BP-", "CP-", "BX-", "JX-",
-            "HDFCBK", "SBIINB", "ICICI", "AXIS", "KOTAK", "IDFC",
-            "YESBNK", "INDUS", "BOBBNK", "CANBNK", "PNBSMS",
-            "iMobile", "UNIONB", "FEDBNK", "SCBANK"
-        )
     }
     
     private val _importProgress = MutableStateFlow<ImportProgress>(ImportProgress.Idle)
@@ -201,26 +193,13 @@ class SmsImportService @Inject constructor(
         return messages
     }
     
-    /**
-     * Check if SMS is from a bank
-     */
-    private fun isBankSms(sender: String, body: String): Boolean {
-        val hasBankSender = BANK_SENDER_PATTERNS.any { pattern ->
-            sender.contains(pattern, ignoreCase = true)
-        }
-        
-        val hasTransactionKeywords = body.let { msg ->
-            msg.contains("debited", ignoreCase = true) ||
-            msg.contains("credited", ignoreCase = true) ||
-            msg.contains("withdrawn", ignoreCase = true) ||
-            msg.contains("deposited", ignoreCase = true) ||
-            msg.contains("UPI", ignoreCase = true) ||
-            (msg.contains("account", ignoreCase = true) && msg.contains("Rs", ignoreCase = true))
-        }
-        
-        return hasBankSender && hasTransactionKeywords
-    }
-    
+    // isBankSms used to be duplicated here with its own copy of the sender-pattern list,
+    // separate from the one the real-time broadcast receiver uses (SmsIngestPipeline.kt).
+    // Two copies of the same classification logic drift apart the moment only one gets
+    // updated - which is exactly what had happened. Bulk import now shares the same
+    // isBankSms(sender, body) top-level function bulk import and real-time SMS both go
+    // through the identical check.
+
     /**
      * Check if READ_SMS permission is granted
      */
