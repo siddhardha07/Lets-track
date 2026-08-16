@@ -63,6 +63,9 @@ fun TransactionReviewForm(
     // skipCurrentToReview/dismissSystemOverlayCard), so a separate "Skip" button offered nothing
     // this didn't already do.
     onDismiss: () -> Unit,
+    // For spam/misparsed SMS that were never a real transaction -- deletes the expense outright
+    // instead of just flagging needsReview (see TransactionReviewService.deleteCurrentToReview).
+    onDelete: () -> Unit,
     // The system overlay's window starts non-focusable (so touches pass through to the app
     // underneath) and needs to know when a text field is actually being edited to flip that -
     // see OverlayService. Not needed inside the app's own bottom sheet, hence the no-op default.
@@ -239,14 +242,23 @@ fun TransactionReviewForm(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Button(
+                    onClick = onDelete,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Delete", fontWeight = FontWeight.SemiBold)
+                }
                 Button(
                     onClick = {
                         onConfirm(selectedCategory, subCategory.ifBlank { null }, notes.ifBlank { null })
                     },
                     shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.weight(1f)
                 ) {
                     Text("Confirm", fontWeight = FontWeight.SemiBold)
                 }

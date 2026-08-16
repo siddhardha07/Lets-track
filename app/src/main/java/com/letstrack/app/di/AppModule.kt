@@ -11,7 +11,11 @@ import com.letstrack.app.data.local.LetsTrackDatabase
 import com.letstrack.app.data.local.dao.BankAccountDao
 import com.letstrack.app.data.local.dao.BudgetDao
 import com.letstrack.app.data.local.dao.CategoryDao
+import com.letstrack.app.data.local.dao.ChatMessageDao
+import com.letstrack.app.data.local.dao.ChatSessionDao
 import com.letstrack.app.data.local.dao.ExpenseDao
+import com.letstrack.app.data.local.dao.GoalContributionDao
+import com.letstrack.app.data.local.dao.GoalDao
 import com.letstrack.app.data.local.dao.SmsTransactionDao
 import com.letstrack.app.data.local.dao.MerchantCategoryDao
 import com.letstrack.app.data.local.dao.UserCorrectionDao
@@ -20,17 +24,26 @@ import com.letstrack.app.data.local.dao.SubCategoryDao
 import com.letstrack.app.data.repository.BankAccountRepositoryImpl
 import com.letstrack.app.data.repository.BudgetRepositoryImpl
 import com.letstrack.app.data.repository.CategoryRepositoryImpl
+import com.letstrack.app.data.repository.ChatRepositoryImpl
 import com.letstrack.app.data.repository.ExpenseRepositoryImpl
+import com.letstrack.app.data.repository.GoalContributionRepositoryImpl
+import com.letstrack.app.data.repository.GoalRepositoryImpl
 import com.letstrack.app.domain.repository.BankAccountRepository
 import com.letstrack.app.domain.repository.BudgetRepository
 import com.letstrack.app.domain.repository.CategoryRepository
+import com.letstrack.app.domain.repository.ChatRepository
 import com.letstrack.app.domain.repository.ExpenseRepository
+import com.letstrack.app.domain.repository.GoalContributionRepository
+import com.letstrack.app.domain.repository.GoalRepository
+import com.google.gson.Gson
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
 import androidx.room.migration.Migration
@@ -40,7 +53,17 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Retention(AnnotationRetention.RUNTIME)
 annotation class ApplicationScope
 
+@Qualifier
+@Retention(AnnotationRetention.RUNTIME)
+annotation class AiDataStoreQualifier
+
+@Qualifier
+@Retention(AnnotationRetention.RUNTIME)
+annotation class UpdateDataStoreQualifier
+
 private val Context.themeDataStore: DataStore<Preferences> by preferencesDataStore(name = "theme_prefs")
+private val Context.aiDataStore: DataStore<Preferences> by preferencesDataStore(name = "ai_prefs")
+private val Context.updateDataStore: DataStore<Preferences> by preferencesDataStore(name = "update_prefs")
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -61,6 +84,33 @@ object AppModule {
 
     @Provides
     @Singleton
+    @AiDataStoreQualifier
+    fun provideAiDataStore(app: Application): DataStore<Preferences> {
+        return app.aiDataStore
+    }
+
+    @Provides
+    @Singleton
+    @UpdateDataStoreQualifier
+    fun provideUpdateDataStore(app: Application): DataStore<Preferences> {
+        return app.updateDataStore
+    }
+
+    @Provides
+    @Singleton
+    fun provideOkHttpClient(): OkHttpClient {
+        return OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideGson(): Gson = Gson()
+
+    @Provides
+    @Singleton
     fun provideDatabase(
         app: Application,
         callback: DatabaseCallback
@@ -71,7 +121,7 @@ object AppModule {
             "letstrack_database"
         )
             .addCallback(callback)
-            .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
             .fallbackToDestructiveMigration() // For development - remove in production
             .build()
     }
@@ -166,6 +216,121 @@ object AppModule {
     @Singleton
     fun provideBudgetRepository(budgetDao: BudgetDao): BudgetRepository {
         return BudgetRepositoryImpl(budgetDao)
+    }
+
+    // Migration from version 7 to 8 (savings goals: goal + manual contribution log)
+    private val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS goals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    name TEXT NOT NULL,
+                    targetAmount REAL NOT NULL,
+                    photoUri TEXT,
+                    link TEXT,
+                    linkedAccountId INTEGER,
+                    sortOrder INTEGER,
+                    isAchieved INTEGER NOT NULL,
+                    createdAt INTEGER NOT NULL,
+                    achievedAt INTEGER
+                )
+            """)
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS goal_contributions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    goalId INTEGER NOT NULL,
+                    amount REAL NOT NULL,
+                    date INTEGER NOT NULL,
+                    note TEXT
+                )
+            """)
+        }
+    }
+
+    @Provides
+    fun provideGoalDao(database: LetsTrackDatabase): GoalDao {
+        return database.goalDao()
+    }
+
+    @Provides
+    fun provideGoalContributionDao(database: LetsTrackDatabase): GoalContributionDao {
+        return database.goalContributionDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideGoalRepository(goalDao: GoalDao): GoalRepository {
+        return GoalRepositoryImpl(goalDao)
+    }
+
+    @Provides
+    @Singleton
+    fun provideGoalContributionRepository(dao: GoalContributionDao): GoalContributionRepository {
+        return GoalContributionRepositoryImpl(dao)
+    }
+
+    // Migration from version 8 to 9 (AI chat: sessions + messages)
+    private val MIGRATION_8_9 = object : Migration(8, 9) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    title TEXT NOT NULL,
+                    createdAt INTEGER NOT NULL,
+                    updatedAt INTEGER NOT NULL
+                )
+            """)
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    sessionId INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL
+                )
+            """)
+        }
+    }
+
+    @Provides
+    fun provideChatSessionDao(database: LetsTrackDatabase): ChatSessionDao {
+        return database.chatSessionDao()
+    }
+
+    @Provides
+    fun provideChatMessageDao(database: LetsTrackDatabase): ChatMessageDao {
+        return database.chatMessageDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideChatRepository(sessionDao: ChatSessionDao, messageDao: ChatMessageDao): ChatRepository {
+        return ChatRepositoryImpl(sessionDao, messageDao)
+    }
+
+    // Migration from version 9 to 10 (merchant seed cleanup) -- the bundled common_merchants.json
+    // used to have ~10,000 entries, all with an identical, made-up confidence of 0.95, which is
+    // exactly what "fake data" looks like, not a real signal. Deletes only source='pre-populated'
+    // rows (the seeded ones) -- genuinely learned rows (source='user-correction', from real
+    // corrections the user made) are untouched. CommonMerchantsLoader's own "already loaded" flag
+    // is bumped separately so it re-seeds from the new, much smaller, curated asset file
+    // afterward.
+    private val MIGRATION_9_10 = object : Migration(9, 10) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("DELETE FROM merchant_categories WHERE source = 'pre-populated'")
+        }
+    }
+
+    // Migration from version 10 to 11 -- CommonMerchantsLoader only inserts merchant names not
+    // already present (deliberately: it must never overwrite a real user-correction row sharing
+    // that name), so bumping its "already loaded" flag alone wouldn't apply corrected
+    // categories/confidence for merchants that were already seeded under MIGRATION_9_10. Wiping
+    // pre-populated rows again forces a clean reseed from the current asset file, same pattern
+    // as that migration.
+    private val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("DELETE FROM merchant_categories WHERE source = 'pre-populated'")
+        }
     }
 
     @Provides

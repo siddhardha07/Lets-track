@@ -23,6 +23,7 @@ fun TransactionReviewOverlay(
     availableCategories: List<String> = defaultOverlayCategories,
     onConfirm: (String, String?) -> Unit,
     onDismiss: () -> Unit,
+    onDelete: () -> Unit = {},
     onClearAll: () -> Unit = {}
 ) {
     if (!isVisible || pendingTransaction == null) return
@@ -39,7 +40,8 @@ fun TransactionReviewOverlay(
             pendingCount = pendingCount,
             onClearAll = onClearAll,
             onConfirm = { category, subCategory, _ -> onConfirm(category, subCategory) },
-            onDismiss = onDismiss
+            onDismiss = onDismiss,
+            onDelete = onDelete
         )
     }
 }

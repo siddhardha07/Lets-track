@@ -286,6 +286,13 @@ class OverlayService : Service() {
                                 transactionReviewService.dismissSystemOverlayCard()
                             }
                         },
+                        onDelete = {
+                            // Spam/misparsed SMS that was never a real transaction -- removes
+                            // the expense outright instead of flagging it needsReview.
+                            scope.launch {
+                                transactionReviewService.deleteSystemOverlayCard()
+                            }
+                        },
                         onEditingChanged = { isEditing -> setOverlayFocusable(isEditing) }
                     )
                     }

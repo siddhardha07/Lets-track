@@ -21,7 +21,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.letstrack.app.ui.update.UpdateDownloadState
+import com.letstrack.app.ui.update.UpdateViewModel
 import androidx.core.content.edit
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -39,7 +42,6 @@ import com.letstrack.app.ui.imports.CsvImportScreen
 import com.letstrack.app.ui.imports.PdfImportScreen
 import com.letstrack.app.ui.navigation.BottomNavItem
 import com.letstrack.app.ui.notifications.NotificationsScreen
-import com.letstrack.app.ui.placeholder.PlaceholderScreen
 import com.letstrack.app.ui.settings.SettingsScreen
 import com.letstrack.app.ui.sms.setup.AccountSetupScreen
 import com.letstrack.app.ui.theme.AccentTheme
@@ -153,13 +155,24 @@ fun MainNavigation(
     }
 
     // Main UI Container
+    // The bottom bar (and floating "+") only belongs on the 4 root tabs -- every other
+    // destination (Add Expense, Add/Edit Goal, Goal Detail, Goals List, AI chat, Categories,
+    // Accounts, PDF/CSV import, Notifications, ...) is a full-screen sub-page with its own back
+    // button/toolbar already, and was showing the root tab bar underneath it too, which is both
+    // visual clutter and specifically overlapped the AI chat screen's own text input.
+    val rootBottomNavRoutes = remember {
+        setOf(BottomNavItem.Home.route, BottomNavItem.Expenses.route, BottomNavItem.Placeholder.route, BottomNavItem.Settings.route)
+    }
+    val currentRouteForBottomBar = navController.currentBackStackEntryAsState().value?.destination?.route
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             bottomBar = {
-                BottomNavigationBar(
-                    navController = navController,
-                    onAddClick = { showAddBottomSheet = true }
-                )
+                if (currentRouteForBottomBar in rootBottomNavRoutes) {
+                    BottomNavigationBar(
+                        navController = navController,
+                        onAddClick = { showAddBottomSheet = true }
+                    )
+                }
             }
         ) { paddingValues ->
         NavHost(
@@ -168,9 +181,6 @@ fun MainNavigation(
             modifier = Modifier.padding(paddingValues)
         ) {
             composable(BottomNavItem.Home.route) {
-                // TODO(AI feature): once API-key storage exists, branch here -- navigate to the
-                // AI chat screen if a key is configured, otherwise keep this toast.
-                val homeContext = LocalContext.current
                 HomeScreen(
                     onSeeAllTransactions = {
                         navController.navigate(BottomNavItem.Expenses.route)
@@ -178,11 +188,45 @@ fun MainNavigation(
                     onOpenNotifications = {
                         navController.navigate("notifications")
                     },
-                    onOpenAi = {
-                        android.widget.Toast.makeText(homeContext, "Setup API key", android.widget.Toast.LENGTH_SHORT).show()
+                    onOpenAiChat = {
+                        navController.navigate("ai_chat")
+                    },
+                    onOpenAiSetup = {
+                        navController.navigate(BottomNavItem.Settings.route)
+                    },
+                    onOpenGoal = { goalId ->
+                        navController.navigate("goal_detail/$goalId")
                     },
                     openBudgetSetupOnLaunch = pendingOpenBudgetSetup,
                     onBudgetSetupConsumed = { pendingOpenBudgetSetup = false }
+                )
+            }
+
+            composable("ai_chat") {
+                com.letstrack.app.ui.ai.AiChatScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToApiKeySetup = {
+                        navController.navigate(BottomNavItem.Settings.route) {
+                            popUpTo("ai_chat") { inclusive = true }
+                        }
+                    }
+                )
+            }
+
+            composable("add_goal/{goalId}") { backStackEntry ->
+                val goalId = backStackEntry.arguments?.getString("goalId")?.toLongOrNull() ?: -1L
+                com.letstrack.app.ui.goals.AddGoalScreen(
+                    goalId = goalId,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            composable("goal_detail/{goalId}") { backStackEntry ->
+                val goalId = backStackEntry.arguments?.getString("goalId")?.toLongOrNull() ?: -1L
+                com.letstrack.app.ui.goals.GoalDetailScreen(
+                    goalId = goalId,
+                    onNavigateBack = { navController.popBackStack() },
+                    onEditGoal = { id -> navController.navigate("add_goal/$id") }
                 )
             }
 
@@ -275,7 +319,12 @@ fun MainNavigation(
                     themeMode = themeMode,
                     onThemeModeChange = onThemeModeChange,
                     accentTheme = accentTheme,
-                    onAccentThemeChange = onAccentThemeChange
+                    onAccentThemeChange = onAccentThemeChange,
+                    onApiKeySaved = {
+                        // Same simple singleTop nav MoreScreen's onOpenBudget already uses to
+                        // jump back to Home after an action completed elsewhere.
+                        navController.navigate(BottomNavItem.Home.route) { launchSingleTop = true }
+                    }
                 )
             }
 
@@ -288,7 +337,23 @@ fun MainNavigation(
             }
 
             composable(BottomNavItem.Placeholder.route) {
-                PlaceholderScreen()
+                com.letstrack.app.ui.more.MoreScreen(
+                    onOpenBudget = {
+                        pendingOpenBudgetSetup = true
+                        navController.navigate(BottomNavItem.Home.route) { launchSingleTop = true }
+                    },
+                    onOpenGoals = {
+                        navController.navigate("goals_list")
+                    }
+                )
+            }
+
+            composable("goals_list") {
+                com.letstrack.app.ui.goals.GoalsListScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onAddGoal = { navController.navigate("add_goal/-1") },
+                    onOpenGoal = { goalId -> navController.navigate("goal_detail/$goalId") }
+                )
             }
         }
 
@@ -365,6 +430,77 @@ fun MainNavigation(
         }
     } // End of Scaffold
 
+    // App Update Dialog -- shown whenever a newer GitHub release is detected (checked on
+    // launch, throttled to 7 days internally, or via Settings' manual "Check for updates"
+    // button, which bypasses that throttle). Outside the Scaffold so it's not tied to whatever
+    // screen happens to be showing.
+    val updateViewModel: UpdateViewModel = hiltViewModel()
+    val latestRelease by updateViewModel.latestRelease.collectAsState()
+    val downloadState by updateViewModel.downloadState.collectAsState()
+    val updateContext = LocalContext.current
+
+    latestRelease?.let { release ->
+        val isDownloading = downloadState is UpdateDownloadState.Downloading
+        val isAwaitingPermission = downloadState is UpdateDownloadState.AwaitingInstallPermission
+        AlertDialog(
+            onDismissRequest = { if (!isDownloading) updateViewModel.dismiss() },
+            title = { Text("Update available -- v${release.versionName}") },
+            text = {
+                Column {
+                    if (release.releaseNotes.isNotBlank()) {
+                        Text(
+                            release.releaseNotes,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
+                    when (val state = downloadState) {
+                        is UpdateDownloadState.Downloading -> {
+                            LinearProgressIndicator(
+                                progress = { state.progress },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text("${(state.progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+                        }
+                        UpdateDownloadState.AwaitingInstallPermission -> {
+                            Text(
+                                "Downloaded. Allow Let's Track to install apps, then come back here.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        is UpdateDownloadState.Failed -> {
+                            Text(
+                                "Update failed: ${state.message}",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        UpdateDownloadState.Idle -> {}
+                    }
+                }
+            },
+            confirmButton = {
+                if (isAwaitingPermission) {
+                    Button(onClick = { updateContext.startActivity(updateViewModel.installPermissionIntent()) }) {
+                        Text("Grant Permission")
+                    }
+                } else {
+                    Button(onClick = { updateViewModel.startUpdate(release) }, enabled = !isDownloading) {
+                        Text("Update Now")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { updateViewModel.dismiss() }, enabled = !isDownloading) {
+                    Text("Later")
+                }
+            }
+        )
+    }
+
     // Add Action Menu -- drawn after (on top of) the Scaffold/custom bottom bar, so the scrim
     // covers the whole screen instead of sitting behind the floating nav bar.
     if (showAddBottomSheet) {
@@ -399,9 +535,7 @@ fun MainNavigation(
             },
             onSavingGoalClick = {
                 showAddBottomSheet = false
-                // Savings goals aren't built yet (separate task) -- routes to the same "Coming
-                // soon" screen the More tab uses, rather than a dead button.
-                navController.navigate(BottomNavItem.Placeholder.route)
+                navController.navigate("add_goal/-1")
             }
         )
     }
@@ -429,7 +563,13 @@ fun MainNavigation(
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
-                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> transactionReviewService.onAppForegrounded()
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                    transactionReviewService.onAppForegrounded()
+                    // Re-checks the install permission after the user comes back from the
+                    // "allow installs from this app" Settings screen, so an already-downloaded
+                    // update APK installs immediately instead of re-downloading.
+                    updateViewModel.onAppResumed()
+                }
                 androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> transactionReviewService.onAppBackgrounded()
                 else -> {}
             }
@@ -463,6 +603,13 @@ fun MainNavigation(
             // same underlying call as this; collapsed since they never differed in practice.
             coroutineScope.launch {
                 transactionReviewService.skipCurrentToReview()
+            }
+        },
+        onDelete = {
+            // Spam/misparsed SMS that was never a real transaction -- removes the expense
+            // outright instead of flagging it needsReview to come back to later.
+            coroutineScope.launch {
+                transactionReviewService.deleteCurrentToReview()
             }
         },
         onClearAll = {

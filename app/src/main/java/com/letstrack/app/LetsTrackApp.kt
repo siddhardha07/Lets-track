@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.letstrack.app.domain.model.DefaultCategories
 import com.letstrack.app.domain.repository.CategoryRepository
+import com.letstrack.app.domain.update.AppUpdateRepository
 import com.letstrack.app.ml.CommonMerchantsLoader
 import com.letstrack.app.service.OverlayService
 import com.letstrack.app.sms.SmsPermissionHandler
@@ -33,6 +34,9 @@ class LetsTrackApp : Application() {
     @Inject
     lateinit var smsPermissionHandler: SmsPermissionHandler
 
+    @Inject
+    lateinit var appUpdateRepository: AppUpdateRepository
+
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     companion object {
@@ -55,6 +59,13 @@ class LetsTrackApp : Application() {
         }
 
         startPersistentMonitoring()
+
+        // Throttled to once every 7 days internally (see AppUpdateRepository) -- safe to call
+        // unconditionally on every launch, it's a no-op network-wise most of the time. Settings'
+        // manual "Check for updates" button bypasses the throttle separately.
+        applicationScope.launch {
+            appUpdateRepository.checkForUpdate(BuildConfig.VERSION_NAME)
+        }
     }
 
     /**

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +64,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.letstrack.app.domain.model.Budget
 import com.letstrack.app.domain.model.Category
 import com.letstrack.app.domain.model.Expense
+import com.letstrack.app.ui.goals.GoalCardStack
+import com.letstrack.app.ui.goals.SavingsGraphChart
 import com.letstrack.app.ui.components.AccentDot
 import com.letstrack.app.ui.components.AppCard
 import com.letstrack.app.ui.components.AppCardVariant
@@ -95,6 +99,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,7 +107,9 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     onSeeAllTransactions: () -> Unit = {},
     onOpenNotifications: () -> Unit = {},
-    onOpenAi: () -> Unit = {},
+    onOpenAiChat: () -> Unit = {},
+    onOpenAiSetup: () -> Unit = {},
+    onOpenGoal: (Long) -> Unit = {},
     openBudgetSetupOnLaunch: Boolean = false,
     onBudgetSetupConsumed: () -> Unit = {}
 ) {
@@ -121,10 +128,14 @@ fun HomeScreen(
     val chartLabelStyle by viewModel.chartLabelStyle.collectAsState()
     val budgetChartData by viewModel.budgetChartData.collectAsState()
     val budgets by viewModel.budgets.collectAsState()
+    val topGoals by viewModel.topGoals.collectAsState()
+    val activeGoalsForGraph by viewModel.activeGoalsForGraph.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
 
     var showDatePicker by remember { mutableStateOf(false) }
     var showFilterSheet by remember { mutableStateOf(false) }
     var showBudgetSetupSheet by remember { mutableStateOf(false) }
+    var showAiSetupDialog by remember { mutableStateOf(false) }
 
     // "+" menu's "Add Budget" entry has no dedicated screen/route of its own -- it navigates
     // back to Home and sets this one-shot flag instead, which just opens the same sheet Home's
@@ -187,7 +198,11 @@ fun HomeScreen(
                     onToggle = { graph ->
                         openGraphs = if (graph in openGraphs) openGraphs - graph else openGraphs + graph
                     },
-                    onAiClick = onOpenAi
+                    onAiClick = {
+                        coroutineScope.launch {
+                            if (viewModel.hasAiApiKeyNow()) onOpenAiChat() else showAiSetupDialog = true
+                        }
+                    }
                 )
             }
 
@@ -247,11 +262,38 @@ fun HomeScreen(
             }
 
             if (HomeGraphIcon.SAVINGS in openGraphs) {
+                // Deliberately not titled "Saving Goals" -- that's the unconditional card stack
+                // below, a different thing from this toggle's own analytics graph.
+                item { SectionHeader("Savings Graph") }
+                item {
+                    if (activeGoalsForGraph.isEmpty()) {
+                        AppCard(modifier = Modifier.fillMaxWidth()) {
+                            EmptyState(title = "No active goals yet", subtitle = "Add a goal from the + button and its progress will show up here.")
+                        }
+                    } else {
+                        val primary = MaterialTheme.colorScheme.primary
+                        AppCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundBrush = heroCardBrush(primary),
+                            borderColor = heroCardBorderColor()
+                        ) {
+                            SavingsGraphChart(goals = activeGoalsForGraph, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            }
+
+            // Unconditional, and deliberately after all four toggle-row graph sections above
+            // (not before) -- whatever graphs are open pushes this stack further down, not the
+            // other way around. Not one of the toggle row's own sections itself (that "Goals"
+            // icon is for a separate savings analytics graph, not this stack).
+            if (topGoals.isNotEmpty()) {
                 item { SectionHeader("Saving Goals") }
                 item {
-                    AppCard(modifier = Modifier.fillMaxWidth()) {
-                        EmptyState(title = "Saving goals are coming soon", subtitle = "Add a goal from the + button and track it here as a card.")
-                    }
+                    GoalCardStack(
+                        goals = topGoals,
+                        onGoalClick = onOpenGoal
+                    )
                 }
             }
 
@@ -333,6 +375,23 @@ fun HomeScreen(
             onDismiss = { showBudgetSetupSheet = false }
         )
     }
+
+    if (showAiSetupDialog) {
+        AlertDialog(
+            onDismissRequest = { showAiSetupDialog = false },
+            title = { Text("Set up AI") },
+            text = { Text("Connect your own OpenAI API key to ask questions about your budget. You can do this now or skip it for later.") },
+            confirmButton = {
+                PrimaryButton(text = "Set API key", onClick = {
+                    showAiSetupDialog = false
+                    onOpenAiSetup()
+                })
+            },
+            dismissButton = {
+                TertiaryButton(text = "I'll do it later", onClick = { showAiSetupDialog = false })
+            }
+        )
+    }
 }
 
 @Composable
@@ -371,10 +430,15 @@ private fun BudgetSetupSheet(
     onClearCategory: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var overallText by remember {
+    // Keyed on budgets/categories, not a bare remember{} -- this sheet can open (via the "+"
+    // menu / More tab's one-shot flag) before HomeViewModel's budgets/categories StateFlows have
+    // delivered their first real DB read, since they're seeded with emptyList(). An unkeyed
+    // remember would freeze on that empty seed forever, showing existing budgets as blank/reset
+    // even though the real values are sitting in the DB the whole time.
+    var overallText by remember(budgets) {
         mutableStateOf(budgets.find { it.categoryId == null }?.amount?.let { formatPlainAmount(it) } ?: "")
     }
-    val categoryTexts = remember {
+    val categoryTexts = remember(budgets, categories) {
         val map = mutableStateMapOf<Long, String>()
         categories.forEach { category ->
             val existing = budgets.find { it.categoryId == category.id }?.amount
@@ -700,13 +764,20 @@ private fun GraphToggleIconButton(
     // Tinted with the theme's own primary color (not a hardcoded one) so these icons follow
     // whichever AccentTheme the user has picked, same as every other themed element on Home.
     val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-        IconButton(
-            onClick = onClick,
+    Column(
+        modifier = Modifier.clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
+        // No longer the click target itself (the whole Column above is, so the label below
+        // is included) -- kept as a plain Box so the icon's tinted background circle still
+        // renders the same size/shape as before.
+        Box(
             modifier = Modifier
                 .size(58.dp)
                 .clip(ShapeFull)
-                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.06f))
+                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.06f)),
+            contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(30.dp))
         }

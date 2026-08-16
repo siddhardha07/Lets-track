@@ -14,8 +14,8 @@ android {
         applicationId = "com.letstrack.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -54,6 +54,9 @@ android {
 
     buildFeatures {
         compose = true
+        // Needed for BuildConfig.VERSION_NAME -- the update checker compares the running app's
+        // own version against the latest GitHub release, not a hardcoded copy of it somewhere.
+        buildConfig = true
     }
 
     composeOptions {
@@ -116,6 +119,10 @@ dependencies {
 
     // Coil for image loading (for category icons if needed)
     implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // Image cropping (goal photos) -- a hand-rolled crop UI (pinch/pan/crop-rect overlay,
+    // bitmap manipulation) is a lot of fragile code for something this well-solved already.
+    implementation("com.github.CanHub:Android-Image-Cropper:4.5.0")
 
     // DataStore for persisted user preferences (theme mode)
     implementation("androidx.datastore:datastore-preferences:1.1.1")

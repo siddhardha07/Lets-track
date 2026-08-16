@@ -1,11 +1,14 @@
 package com.letstrack.app.ui.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,16 +25,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,17 +62,22 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.letstrack.app.domain.ai.AiProvider
 import com.letstrack.app.sms.SmsPermissionHandler
 import com.letstrack.app.ui.components.AppCard
 import com.letstrack.app.ui.components.ConfirmationDialog
+import com.letstrack.app.ui.components.NavRow
 import com.letstrack.app.ui.components.PrimaryButton
 import com.letstrack.app.ui.components.SecondaryButton
 import com.letstrack.app.ui.components.SectionHeader
 import com.letstrack.app.ui.components.SegmentedControl
+import com.letstrack.app.ui.components.TertiaryButton
 import com.letstrack.app.ui.theme.AccentTheme
 import com.letstrack.app.ui.theme.ShapeFull
 import com.letstrack.app.ui.theme.Spacing
@@ -83,6 +99,7 @@ fun SettingsScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     accentTheme: AccentTheme,
     onAccentThemeChange: (AccentTheme) -> Unit,
+    onApiKeySaved: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
@@ -234,17 +251,20 @@ fun SettingsScreen(
                 }
             }
 
+            item { SectionHeader("AI") }
+            item { AiSettingsCard(viewModel = viewModel, onApiKeySaved = onApiKeySaved) }
+
             item { SectionHeader("More") }
             item {
                 AppCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(0.dp)) {
-                    SettingsNavRow(
+                    NavRow(
                         icon = Icons.Filled.AccountBalance,
                         title = "Bank Accounts",
                         subtitle = "Manage linked accounts & SMS import",
                         onClick = onNavigateToAccounts
                     )
                     HorizontalDivider()
-                    SettingsNavRow(
+                    NavRow(
                         icon = Icons.Filled.Category,
                         title = "Categories",
                         subtitle = "Manage spending categories",
@@ -291,6 +311,9 @@ fun SettingsScreen(
                     onAction = { batteryOptimizationHandler.requestIgnoreBatteryOptimizations() }
                 )
             }
+
+            item { SectionHeader("About") }
+            item { UpdateCheckCard() }
         }
     }
 
@@ -357,37 +380,6 @@ private fun AccentSwatch(accent: AccentTheme, isSelected: Boolean, onClick: () -
 }
 
 @Composable
-private fun SettingsNavRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(Spacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.md)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(ShapeFull)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
 private fun PermissionCard(
     icon: ImageVector,
     title: String,
@@ -446,5 +438,181 @@ private fun PermissionDetailRow(label: String, granted: Boolean) {
             style = MaterialTheme.typography.labelSmall,
             color = if (granted) incomeColor() else MaterialTheme.colorScheme.error
         )
+    }
+}
+
+/**
+ * BYOK setup, multi-provider -- the app never has its own key for any provider, only the user's
+ * own (see AiSettingsRepository's doc comment on how it's stored). A key can be saved for more
+ * than one provider, but only [SettingsViewModel.activeAiProvider] is actually used when the chat
+ * screen sends a message -- saving a key also makes that provider active.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AiSettingsCard(viewModel: SettingsViewModel, onApiKeySaved: () -> Unit) {
+    val activeProvider by viewModel.activeAiProvider.collectAsState()
+    val savedProviderIds by viewModel.savedAiProviderIds.collectAsState()
+    val context = LocalContext.current
+
+    var selectedProvider by remember(activeProvider) { mutableStateOf(activeProvider ?: AiProvider.OPENAI) }
+    var expanded by remember { mutableStateOf(false) }
+    var keyInput by remember { mutableStateOf("") }
+    var showKey by remember { mutableStateOf(false) }
+
+    AppCard(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "Connect your own API key to use the AI assistant. Nothing is sent anywhere until you " +
+                "set this up, and every request goes straight from your device to the provider under " +
+                "your own account -- this app never sees or stores a copy anywhere else.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(Spacing.md))
+
+        // Plain DropdownMenu anchored to a clickable row, not ExposedDropdownMenuBox -- this
+        // Material3 version's ExposedDropdownMenuBox API (MenuAnchorType, etc.) doesn't match
+        // what's actually available here, and this is the exact pattern AccountsListScreen's
+        // own menu already uses successfully.
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                    .clickable { expanded = true }
+                    .padding(Spacing.md),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Provider", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        selectedProvider.displayName + if (selectedProvider.isFree) " · Free" else "",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose provider")
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                AiProvider.entries.forEach { provider ->
+                    DropdownMenuItem(
+                        text = { Text(provider.displayName + if (provider.isFree) " (Free)" else "") },
+                        onClick = {
+                            selectedProvider = provider
+                            expanded = false
+                            keyInput = ""
+                        }
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(Spacing.md))
+
+        if (selectedProvider.id in savedProviderIds) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(selectedProvider.displayName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
+                    Text(
+                        if (selectedProvider == activeProvider) "Active" else "Key saved, not active",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (selectedProvider == activeProvider) incomeColor() else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row {
+                    if (selectedProvider != activeProvider) {
+                        TertiaryButton(
+                            text = "Use this",
+                            onClick = {
+                                viewModel.setActiveAiProvider(selectedProvider)
+                                onApiKeySaved()
+                            }
+                        )
+                    }
+                    TertiaryButton(text = "Remove", onClick = { viewModel.clearAiApiKey(selectedProvider) })
+                }
+            }
+        } else {
+            Text(
+                "Get a key from ${selectedProvider.apiKeyUrl.removePrefix("https://")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selectedProvider.apiKeyUrl)))
+                }
+            )
+            Spacer(Modifier.height(Spacing.md))
+            OutlinedTextField(
+                value = keyInput,
+                onValueChange = { keyInput = it },
+                label = { Text("API key") },
+                singleLine = true,
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showKey = !showKey }) {
+                        Icon(
+                            if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (showKey) "Hide key" else "Show key"
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(Spacing.md))
+            PrimaryButton(
+                text = "Save",
+                onClick = {
+                    viewModel.saveAiApiKey(selectedProvider, keyInput.trim())
+                    keyInput = ""
+                    onApiKeySaved()
+                },
+                enabled = keyInput.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+/**
+ * Manual update check -- bypasses AppUpdateRepository's 7-day throttle (a deliberate tap should
+ * always actually check). If a newer release is found, the same global "Update Now" dialog in
+ * MainActivity picks it up automatically (both this card's ViewModel instance and MainActivity's
+ * read from the same underlying AppUpdateRepository singleton, so they stay in sync even though
+ * they're separate hiltViewModel() instances).
+ */
+@Composable
+private fun UpdateCheckCard(viewModel: com.letstrack.app.ui.update.UpdateViewModel = hiltViewModel()) {
+    val checkResultMessage by viewModel.checkResultMessage.collectAsState()
+
+    AppCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Version", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
+                Text(
+                    com.letstrack.app.BuildConfig.VERSION_NAME,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            TertiaryButton(text = "Check for updates", onClick = viewModel::checkNow)
+        }
+        checkResultMessage?.let { message ->
+            Spacer(Modifier.height(Spacing.sm))
+            Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    LaunchedEffect(checkResultMessage) {
+        if (checkResultMessage != null) {
+            kotlinx.coroutines.delay(3000)
+            viewModel.clearCheckResultMessage()
+        }
     }
 }

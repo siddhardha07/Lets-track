@@ -25,6 +25,11 @@
     <!-- Exempt from Doze/battery optimization so SMS overlay stays reliable in background -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Needed to hand a downloaded update APK to the system installer: a "normal" permission
+         (no runtime prompt for the permission itself), but Android still shows a one-time
+         "allow installs from this app" toggle the first time the install screen actually opens. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Declare telephony feature as not required so app works on tablets -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
@@ -48,6 +53,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The cropper library's own activity needs a Theme.AppCompat descendant, since the
+             app's own Theme.LetsTrack (Compose-only, not AppCompat derived) crashes it on
+             launch. Plain Theme.AppCompat, not the NoActionBar variant, because the library's
+             own layout has no toolbar view of its own: it relies entirely on the theme's
+             default action bar to host its Crop/rotate/flip menu items, so NoActionBar was
+             hiding the confirm button along with the whole bar. -->
+        <activity
+            android:name="com.canhub.cropper.CropImageActivity"
+            android:theme="@style/Theme.AppCompat" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

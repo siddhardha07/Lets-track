@@ -8,12 +8,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.letstrack.app.data.local.LetsTrackDatabase
+import com.letstrack.app.domain.ai.AiProvider
+import com.letstrack.app.domain.ai.AiSettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -49,11 +53,30 @@ sealed class BackupState {
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val database: LetsTrackDatabase
+    private val database: LetsTrackDatabase,
+    private val aiSettingsRepository: AiSettingsRepository
 ) : ViewModel() {
 
     private val _backupState = MutableStateFlow<BackupState>(BackupState.Idle)
     val backupState: StateFlow<BackupState> = _backupState.asStateFlow()
+
+    val activeAiProvider: StateFlow<AiProvider?> = aiSettingsRepository.activeProvider
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val savedAiProviderIds: StateFlow<Set<String>> = aiSettingsRepository.savedProviderIds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    fun saveAiApiKey(provider: AiProvider, key: String) {
+        viewModelScope.launch { aiSettingsRepository.saveApiKey(provider, key) }
+    }
+
+    fun clearAiApiKey(provider: AiProvider) {
+        viewModelScope.launch { aiSettingsRepository.clearApiKey(provider) }
+    }
+
+    fun setActiveAiProvider(provider: AiProvider) {
+        viewModelScope.launch { aiSettingsRepository.setActiveProvider(provider) }
+    }
 
     fun clearBackupState() {
         _backupState.value = BackupState.Idle

@@ -30,8 +30,16 @@ class CommonMerchantsLoader @Inject constructor(
         // Bumped from "common_merchants_loaded" to "_v2" so installs that already ran the
         // loader once (back when the bundled file had ~150 entries) run it again now that it
         // has ~10,000 - the old flag would otherwise permanently skip loading the new ones.
-        // Bump again (_v3, _v4...) any time the asset file grows with genuinely new merchants.
-        private const val KEY_LOADED = "common_merchants_loaded_v2"
+        // Bumped to "_v3" for the merchant seed cleanup: the ~10,000-entry file (all with an
+        // identical fake 0.95 confidence) was replaced with ~1,000 curated real merchants from
+        // OSM data (see datasets/curate_top_merchants.py) - the old rows are cleared by
+        // MIGRATION_9_10, and this flag bump is what makes the loader actually re-run and
+        // re-seed from the new file afterward.
+        // Bumped to "_v4": merged in ~60 hand-picked well-known merchants (Swiggy, Amazon, IRCTC,
+        // banks, etc. - see datasets/merge_curated_additions.py) that OSM structurally can't
+        // cover since they're not physical points of interest. No DB migration needed for this
+        // one - the flag bump alone is what makes the loader re-run against the updated asset.
+        private const val KEY_LOADED = "common_merchants_loaded_v4"
     }
 
     data class CommonMerchants(

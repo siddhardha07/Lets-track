@@ -157,6 +157,7 @@ class ExpensesViewModel @Inject constructor(
             filtered.filter { expense ->
                 expense.title.contains(query, ignoreCase = true) ||
                 expense.description.contains(query, ignoreCase = true) ||
+                expense.subCategory?.contains(query, ignoreCase = true) == true ||
                 expense.amount.toString().contains(query)
             }
         }

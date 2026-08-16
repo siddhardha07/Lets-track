@@ -2,6 +2,9 @@ package com.letstrack.app.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.letstrack.app.domain.ai.AiSettingsRepository
+import com.letstrack.app.domain.goal.GoalProgress
+import com.letstrack.app.domain.goal.GoalProgressProvider
 import com.letstrack.app.domain.model.BankAccount
 import com.letstrack.app.domain.model.Budget
 import com.letstrack.app.domain.model.Category
@@ -101,14 +104,43 @@ class HomeViewModel @Inject constructor(
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val bankAccountRepository: BankAccountRepository,
-    private val budgetRepository: BudgetRepository
+    private val budgetRepository: BudgetRepository,
+    goalProgressProvider: GoalProgressProvider,
+    private val aiSettingsRepository: AiSettingsRepository
 ) : ViewModel() {
+
+    // A one-shot suspend read, not a continuously-observed StateFlow -- the AI icon's tap
+    // handler needs the actual current value at the moment of the click, not whatever a
+    // WhileSubscribed StateFlow happened to have cached (which can be stale right after
+    // navigating back from Settings having just saved a key -- see AiChatViewModel's
+    // currentApiKeyOrNull for the same class of bug on the chat screen's side).
+    suspend fun hasAiApiKeyNow(): Boolean = aiSettingsRepository.currentActiveProviderAndKey() != null
 
     // Raw configured budgets (no spend attached) -- what the setup sheet edits. Budget *status*
     // for display (spend vs limit) is [budgetChartData] below, kept separate since that one is
     // filter-dependent and this one isn't.
     val budgets: StateFlow<List<Budget>> = budgetRepository.getAllBudgets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Unconditional on Home (not one of the toggle-row graph sections) -- top goals by percent
+    // complete, with any manually-reordered ones (sortOrder set) pinned first in their chosen
+    // order. Achieved goals drop out of this list entirely once celebrated.
+    val topGoals: StateFlow<List<GoalProgress>> = goalProgressProvider.goalProgress.map { list ->
+        list.filter { !it.goal.isAchieved }
+            .sortedWith(
+                compareBy(
+                    { it.goal.sortOrder ?: Int.MAX_VALUE },
+                    { -it.percent }
+                )
+            )
+            .take(4)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // The "Savings Graph" toggle section shows every active goal (not capped at 4 like the Home
+    // card stack) -- it's the dedicated analytics view, the card stack is the quick-glance one.
+    val activeGoalsForGraph: StateFlow<List<GoalProgress>> = goalProgressProvider.goalProgress.map { list ->
+        list.filter { !it.goal.isAchieved }.sortedByDescending { it.percent }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun setOverallBudget(amount: Double) {
         viewModelScope.launch { budgetRepository.setOverallBudget(amount) }

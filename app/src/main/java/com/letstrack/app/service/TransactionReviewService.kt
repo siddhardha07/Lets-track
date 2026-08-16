@@ -95,12 +95,12 @@ class TransactionReviewService @Inject constructor(
         Log.d(TAG, "🎯 Suggested category: ${transaction.suggestedCategory}")
         enqueue(transaction)
         if (isAppForegrounded) {
-            // The app is already open - the in-app stack (driven by the same queue) already
-            // picks this up on its own. Showing the system overlay too would just draw a
-            // second, no-count copy of this same card on top of the in-app view, which is the
-            // exact bug this whole split was meant to fix.
-            Log.d(TAG, "🎯 App is foregrounded - letting the in-app stack show it, skipping system overlay")
-            _isOverlayVisible.value = true
+            // The app is already open -- just queue it silently and wait for the explicit
+            // "Review N transactions now" button in Notifications, same as the backlog path
+            // (seedQueueFromDatabase) already does. This used to auto-pop _isOverlayVisible
+            // here, which was the exact "irritating auto-popup" behavior that button was built
+            // to replace -- it just never got removed from this real-time path too.
+            Log.d(TAG, "🎯 App is foregrounded - queuing silently, not auto-showing the review stack")
         } else {
             // This is a real-time transaction (not a backfilled/missed one), so it's also the
             // one card the system overlay is allowed to show right now.
@@ -431,6 +431,36 @@ class TransactionReviewService @Inject constructor(
         val current = _systemOverlayTransaction.value
         Log.d(TAG, "Dismissing system overlay card: ${current?.merchantName}")
         if (current != null) markNeedsReview(current.expenseId)
+        _systemOverlayTransaction.value = null
+    }
+
+    /**
+     * Deletes the current top-of-stack transaction outright (spam or a misparsed SMS that was
+     * never really a transaction) -- unlike skipCurrentToReview, this doesn't mark needsReview to
+     * come back to later, it removes the underlying expense row entirely.
+     */
+    suspend fun deleteCurrentToReview() {
+        val current = _pendingTransactions.value.firstOrNull() ?: return
+        Log.d(TAG, "Deleting spam/misparsed transaction: ${current.merchantName}")
+        try {
+            expenseRepository.deleteExpenseById(current.expenseId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error deleting expense ${current.expenseId}: ${e.message}", e)
+        }
+        advanceQueue(current.expenseId)
+    }
+
+    /** Same as [deleteCurrentToReview] but for the single card the system overlay is showing. */
+    suspend fun deleteSystemOverlayCard() {
+        val current = _systemOverlayTransaction.value
+        Log.d(TAG, "Deleting spam/misparsed system overlay card: ${current?.merchantName}")
+        if (current != null) {
+            try {
+                expenseRepository.deleteExpenseById(current.expenseId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error deleting expense ${current.expenseId}: ${e.message}", e)
+            }
+        }
         _systemOverlayTransaction.value = null
     }
 
