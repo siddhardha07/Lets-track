@@ -2,16 +2,29 @@
 
 A modern Android personal finance app built with Kotlin, Jetpack Compose, and Material 3. Automatically tracks your expenses through SMS parsing with smart AI-powered categorization.
 
+**Current version: 2.0.0** - see [Installing & Updating](#installing--updating) for how releases are distributed.
+
 ## Features
 
 ### 🎯 Core Features
 
 - ✅ **Automatic SMS Import** - Auto-capture transactions from bank SMS messages
-- ✅ **Smart Categorization** - AI-powered merchant recognition and category learning
+- ✅ **PDF Statement Import** - Convert a bank statement PDF to JSON with the included Python script, then import it directly
+- ✅ **Smart Categorization** - AI-powered merchant recognition and category learning, seeded with 1,000+ real merchants
 - ✅ **Merchant Learning** - Automatically categorize future transactions from known merchants
 - ✅ **Bulk Update with Confirmation** - Update all transactions from a merchant with user confirmation
 - ✅ **Pull-to-Refresh** - Smart SMS scanning (only new messages since last import)
 - ✅ **Transaction Review Overlay** - Review and categorize new transactions in a beautiful bottom sheet
+
+### 💸 Budgets & Goals
+
+- ✅ **Category Budgets** - Set monthly budgets per category, tracked with glassy thermometer-bar charts on Home
+- ✅ **Savings Goals** - Create goals with a photo (crop it right in the app), track progress with a card stack and circular progress rings on Home
+
+### 🤖 AI Assistant
+
+- ✅ **Chat with your finances** - Ask questions about your spending; the assistant only ever sees percentages/ratios, never raw amounts, merchant names, or account details
+- ✅ **Bring-your-own-key, multi-provider** - Choose OpenAI, Groq, or Google Gemini in Settings and paste in your own API key (Groq and Gemini both have genuinely free tiers)
 
 ### 📊 Analytics & Insights
 
@@ -56,8 +69,10 @@ A modern Android personal finance app built with Kotlin, Jetpack Compose, and Ma
 - **Async**: Coroutines + Flow
 - **Design**: Material 3 with glass morphism and gradient cards
 - **SMS Processing**: BroadcastReceiver + Background Service
-- **AI/ML**: Custom merchant categorization engine
-- **Permissions**: Runtime permission handling (SMS, Notifications)
+- **AI/ML**: Custom merchant categorization engine, seeded from real OpenStreetMap merchant data; multi-provider chat assistant (OpenAI/Groq/Gemini)
+- **Image Cropping**: Android-Image-Cropper (CanHub) for goal photos
+- **App Updates**: GitHub Releases as a free, self-hosted update channel - see [Installing & Updating](#installing--updating)
+- **Permissions**: Runtime permission handling (SMS, Notifications, install-unknown-apps)
 - **Concurrency**: Mutex for thread-safe operations
 
 ## Project Structure
@@ -72,7 +87,10 @@ app/
 │   └── repository/              # Repository implementations
 ├── domain/
 │   ├── model/                   # Domain models (Expense, Category, Prediction, etc.)
-│   └── repository/              # Repository interfaces
+│   ├── repository/              # Repository interfaces
+│   ├── ai/                      # Multi-provider AI clients (OpenAI/Groq/Gemini) + budget-context builder
+│   ├── goal/                    # Goal progress calculations
+│   └── update/                  # GitHub Releases check + APK download/install
 ├── ui/
 │   ├── home/                    # Home screen with analytics dashboard
 │   │   ├── HomeScreen.kt        # Hero cards, charts, insights
@@ -81,6 +99,9 @@ app/
 │   ├── addexpense/              # Add/Edit expense screen
 │   ├── overlay/                 # Transaction review bottom sheet
 │   ├── notifications/           # Pending transaction notifications
+│   ├── goals/                   # Savings goals: card stack, detail, add/crop
+│   ├── ai/                      # AI assistant chat screen + view model
+│   ├── update/                  # In-app update dialog view model
 │   ├── settings/                # App settings and customization
 │   ├── components/              # Reusable UI components (cards, charts, buttons)
 │   └── theme/                   # Material 3 theme with accent colors
@@ -95,6 +116,11 @@ app/
 │   └── CommonMerchantsLoader.kt # Loads pre-trained merchant data
 ├── service/                     # Background services
 └── di/                          # Dependency Injection modules
+
+datasets/                        # One-time OSM merchant-data extraction/curation pipeline
+├── extract.py                   # Pulls + categorizes merchants from OSM India data
+├── curate_top_merchants.py      # Picks the top ~1,000 by occurrence frequency
+└── merge_curated_additions.py   # Merges in hand-picked/user-provided merchants
 ```
 
 ## Building the App
@@ -109,8 +135,17 @@ app/
 - ✅ SMS (READ_SMS, RECEIVE_SMS) - For automatic transaction capture
 - ✅ POST_NOTIFICATIONS - For transaction review alerts
 - ✅ RECEIVE_BOOT_COMPLETED - For SMS monitoring after device restart
+- ✅ REQUEST_INSTALL_PACKAGES - For installing app updates downloaded in-app
 
 The app will request these permissions at runtime when needed.
+
+## Installing & Updating
+
+This app isn't on the Play Store, so it's distributed as an APK attached to [GitHub Releases](https://github.com/siddhardha07/Lets-track/releases).
+
+- **First install**: download the latest release's APK and sideload it (you'll need to allow "install unknown apps" for your browser/file manager once).
+- **Later updates**: the app checks GitHub Releases for a newer version on launch (throttled to once every 7 days) and any time you tap **Settings → Check for updates**. If a newer version is found, it downloads the APK and hands off to the system installer - no Play Store required.
+- Every release APK is signed with the same key, so updates install in place without losing your data. A release signed with a *different* key (or a debug build installed via `adb`) won't be accepted as an "update" over an existing install - you'd need to uninstall first, which does lose local data.
 
 ## Screenshots
 
@@ -146,18 +181,35 @@ When you categorize a transaction from a merchant:
 - **Category Breakdown**: Interactive donut chart with tap-to-filter
 - **AI Insights**: Smart recommendations based on spending patterns
 
+### 💸 Budgets
+
+- Set a monthly budget per category from the Home screen
+- Progress shown as a glassy thermometer-style bar chart that fills as you spend
+- Editing a budget mid-month updates the same entry rather than resetting it
+
+### 🎯 Savings Goals
+
+- Create a goal with a target amount and an optional photo (cropped in-app before saving)
+- Track progress from Home via a swipeable card stack, or from a dedicated list/detail screen
+- A circular-progress graph shows up to 3 goals at once - centered and larger if you only have one
+
+### 🤖 AI Assistant
+
+- Chat about your spending from the AI tab
+- Pick a provider in Settings (OpenAI, Groq, or Gemini) and paste in your own API key - Groq and Gemini both offer free tiers, OpenAI does not
+- Only percentages and ratios are sent as context, never raw amounts, merchant names, or account details
+
 ## Future Enhancements
 
-- [ ] Budget tracking and alerts
 - [ ] Recurring transaction detection
 - [ ] Multi-account support
-- [ ] CSV/PDF export
+- [ ] CSV export
 - [ ] Backup and sync
 - [ ] Split transactions
-- [ ] Receipt photo attachment
 - [ ] Natural language transaction entry
-- [ ] Savings goals tracking
 - [ ] Bill reminders
+- [ ] Grok (xAI) as an additional AI provider option
+- [ ] Red highlighting in Expenses tab + overlay dot for over-budget categories
 
 ## Getting Started
 
