@@ -82,6 +82,16 @@ class TransactionReviewService @Inject constructor(
     private val _isOverlayVisible = MutableStateFlow(false)
     val isOverlayVisible: StateFlow<Boolean> = _isOverlayVisible.asStateFlow()
 
+    // The live category list for the in-app review sheet's picker - MainActivity used to pass
+    // nothing here at all, so TransactionReviewOverlay silently fell back to its hardcoded
+    // defaultOverlayCategories (a stale list with names like "Health & Fitness" and
+    // "Investments" that don't match any real category). Picking one of those in the sheet
+    // then created a brand-new category on confirm instead of reusing an existing one - see
+    // TransactionReviewForm's doc comment on the category-duplication bug this contributed to.
+    val categoryNames: StateFlow<List<String>> = categoryRepository.getAllCategories()
+        .map { categories -> categories.map { it.name } }
+        .stateIn(serviceScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     // Tracks whether MainActivity is currently resumed, so showReview() knows whether to bother
     // with the system overlay at all - see onAppForegrounded/onAppBackgrounded and showReview.
     @Volatile

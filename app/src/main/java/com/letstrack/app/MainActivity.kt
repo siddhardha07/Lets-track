@@ -544,6 +544,7 @@ fun MainNavigation(
     val pendingTransaction by transactionReviewService.pendingTransaction.collectAsState()
     val pendingCount by transactionReviewService.pendingCount.collectAsState()
     val isVisible by transactionReviewService.isOverlayVisible.collectAsState()
+    val reviewCategoryNames by transactionReviewService.categoryNames.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     // On app start, backfill the queue with anything the DB already has flagged needsReview
@@ -582,6 +583,7 @@ fun MainNavigation(
         pendingTransaction = pendingTransaction,
         isVisible = isVisible,
         pendingCount = pendingCount,
+        availableCategories = reviewCategoryNames.ifEmpty { com.letstrack.app.ui.overlay.defaultOverlayCategories },
         onConfirm = { category, subCategory ->
             // confirmTransaction() pops this one off the queue and advances to the next
             // (or hides the overlay if none remain) - no separate dismissReview() call needed,

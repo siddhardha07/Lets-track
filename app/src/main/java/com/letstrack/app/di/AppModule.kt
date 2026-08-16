@@ -121,7 +121,7 @@ object AppModule {
             "letstrack_database"
         )
             .addCallback(callback)
-            .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+            .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
             .fallbackToDestructiveMigration() // For development - remove in production
             .build()
     }
@@ -330,6 +330,53 @@ object AppModule {
     private val MIGRATION_10_11 = object : Migration(10, 11) {
         override fun migrate(database: SupportSQLiteDatabase) {
             database.execSQL("DELETE FROM merchant_categories WHERE source = 'pre-populated'")
+        }
+    }
+
+    // Migration from version 11 to 12 -- fixes duplicated default categories. Two independent
+    // seeders (DatabaseCallback.onCreate for fresh installs, LetsTrackApp's
+    // seedDefaultCategoriesIfEmpty fallback for upgraded installs) both raced to insert the same
+    // default categories on first launch, with no unique constraint on name to stop it -- every
+    // default category ended up duplicated (confirmed live: "Bills & Utilities", "Food", etc.
+    // each appearing twice in the category picker). This migration merges each duplicate group
+    // (repointing any expense/budget that referenced the row being dropped) before adding the
+    // unique index that makes the underlying race harmless going forward.
+    private val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("""
+                CREATE TEMP TABLE _category_winners AS
+                SELECT name, MIN(id) AS winner_id
+                FROM categories
+                GROUP BY name
+                HAVING COUNT(*) > 1
+            """.trimIndent())
+
+            database.execSQL("""
+                CREATE TEMP TABLE _category_losers AS
+                SELECT c.id AS loser_id, w.winner_id AS winner_id
+                FROM categories c
+                JOIN _category_winners w ON c.name = w.name
+                WHERE c.id != w.winner_id
+            """.trimIndent())
+
+            database.execSQL("""
+                UPDATE expenses
+                SET categoryId = (SELECT winner_id FROM _category_losers WHERE loser_id = expenses.categoryId)
+                WHERE categoryId IN (SELECT loser_id FROM _category_losers)
+            """.trimIndent())
+
+            database.execSQL("""
+                UPDATE budgets
+                SET categoryId = (SELECT winner_id FROM _category_losers WHERE loser_id = budgets.categoryId)
+                WHERE categoryId IN (SELECT loser_id FROM _category_losers)
+            """.trimIndent())
+
+            database.execSQL("DELETE FROM categories WHERE id IN (SELECT loser_id FROM _category_losers)")
+
+            database.execSQL("DROP TABLE _category_winners")
+            database.execSQL("DROP TABLE _category_losers")
+
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_categories_name ON categories(name)")
         }
     }
 

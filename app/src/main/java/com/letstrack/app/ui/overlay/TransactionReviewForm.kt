@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -78,7 +79,16 @@ fun TransactionReviewForm(
     var customCategories by remember(transaction.expenseId) { mutableStateOf(listOf<String>()) }
     var isAddingCategory by remember(transaction.expenseId) { mutableStateOf(false) }
     var newCategoryText by remember(transaction.expenseId) { mutableStateOf("") }
+    var isSearchingCategory by remember(transaction.expenseId) { mutableStateOf(false) }
+    var categorySearchQuery by remember(transaction.expenseId) { mutableStateOf("") }
     val allCategories = remember(availableCategories, customCategories) { availableCategories + customCategories }
+    val filteredCategories = remember(allCategories, categorySearchQuery) {
+        if (categorySearchQuery.isBlank()) allCategories
+        else allCategories.filter { it.contains(categorySearchQuery, ignoreCase = true) }
+    }
+    val categorySearchHasExactMatch = remember(allCategories, categorySearchQuery) {
+        allCategories.any { it.equals(categorySearchQuery, ignoreCase = true) }
+    }
 
     val isCredit = transaction.transactionType.equals("CREDIT", ignoreCase = true)
     val amountColor = if (isCredit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
@@ -164,16 +174,70 @@ fun TransactionReviewForm(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            if (isSearchingCategory) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = categorySearchQuery,
+                        onValueChange = { categorySearchQuery = it },
+                        placeholder = { Text("Search categories") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .onFocusChanged { onEditingChanged(it.isFocused) },
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                isSearchingCategory = false
+                                categorySearchQuery = ""
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Close search")
+                            }
+                        }
+                    )
+                    // Only offered once there's a query with no existing category matching it -
+                    // otherwise this would just be a confusing second way to select something
+                    // already selectable as a chip below.
+                    if (categorySearchQuery.isNotBlank() && !categorySearchHasExactMatch) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(onClick = {
+                            val name = categorySearchQuery.trim()
+                            customCategories = customCategories + name
+                            selectedCategory = name
+                            isSearchingCategory = false
+                            categorySearchQuery = ""
+                        }) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "Create \"${categorySearchQuery.trim()}\"",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(allCategories) { category ->
+                if (!isSearchingCategory) {
+                    item {
+                        IconButton(onClick = { isSearchingCategory = true }) {
+                            Icon(Icons.Default.Search, contentDescription = "Search categories")
+                        }
+                    }
+                }
+                items(filteredCategories) { category ->
                     CategoryPickerChip(
                         label = category,
                         selected = category == selectedCategory,
                         onClick = { selectedCategory = category }
                     )
                 }
-                item {
-                    AddCategoryChip(onClick = { isAddingCategory = true })
+                if (!isSearchingCategory) {
+                    item {
+                        AddCategoryChip(onClick = { isAddingCategory = true })
+                    }
                 }
             }
 

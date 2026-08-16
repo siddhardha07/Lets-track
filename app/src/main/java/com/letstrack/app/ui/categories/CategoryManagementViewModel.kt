@@ -46,7 +46,6 @@ class CategoryManagementViewModel @Inject constructor(
 
     init {
         loadEnabledCategories()
-        initializeDefaultCategories()
     }
 
     private fun loadEnabledCategories() {
@@ -96,13 +95,18 @@ class CategoryManagementViewModel @Inject constructor(
                 isDefault = false
             )
 
-            val categoryId = categoryDao.insertCategory(categoryEntity)
+            // -1 means a category with this exact name already exists (unique index, IGNORE
+            // on conflict) - fall back to its real id rather than enabling a bogus -1 entry.
+            val insertedId = categoryDao.insertCategory(categoryEntity)
+            val categoryId = if (insertedId != -1L) insertedId else categoryDao.getCategoryByName(name)?.id
 
-            // Auto-enable newly created category
-            val current = _enabledCategoryIds.value.toMutableSet()
-            current.add(categoryId)
-            _enabledCategoryIds.value = current
-            saveEnabledCategories()
+            if (categoryId != null) {
+                // Auto-enable newly created (or already-existing) category
+                val current = _enabledCategoryIds.value.toMutableSet()
+                current.add(categoryId)
+                _enabledCategoryIds.value = current
+                saveEnabledCategories()
+            }
         }
     }
 
@@ -190,36 +194,11 @@ class CategoryManagementViewModel @Inject constructor(
         }
     }
 
-    private fun initializeDefaultCategories() {
-        viewModelScope.launch {
-            val existingCount = categoryDao.getCategoriesCount()
-            if (existingCount == 0) {
-                // Insert default categories
-                val defaultCategories = listOf(
-                    CategoryEntity(name = "Food", icon = "🍔", color = "#FF9800", isDefault = true),
-                    CategoryEntity(name = "Shopping", icon = "🛒", color = "#2196F3", isDefault = true),
-                    CategoryEntity(name = "Transport", icon = "🚗", color = "#4CAF50", isDefault = true),
-                    CategoryEntity(name = "Bills & Utilities", icon = "💡", color = "#F44336", isDefault = true),
-                    CategoryEntity(name = "Entertainment", icon = "🎬", color = "#9C27B0", isDefault = true),
-                    CategoryEntity(name = "Health & Fitness", icon = "💊", color = "#00BCD4", isDefault = true),
-                    CategoryEntity(name = "Travel", icon = "✈️", color = "#FFEB3B", isDefault = true),
-                    CategoryEntity(name = "Education", icon = "📚", color = "#795548", isDefault = true),
-                    CategoryEntity(name = "Personal Care", icon = "💇", color = "#E91E63", isDefault = true),
-                    CategoryEntity(name = "Investments", icon = "📈", color = "#607D8B", isDefault = true),
-                    CategoryEntity(name = "Gifts & Donations", icon = "🎁", color = "#FF5722", isDefault = true),
-                    CategoryEntity(name = "Other", icon = "💰", color = "#9E9E9E", isDefault = true)
-                )
-
-                defaultCategories.forEach { category ->
-                    val categoryId = categoryDao.insertCategory(category)
-
-                    // Enable all default categories by default
-                    val current = _enabledCategoryIds.value.toMutableSet()
-                    current.add(categoryId)
-                    _enabledCategoryIds.value = current
-                }
-                saveEnabledCategories()
-            }
-        }
-    }
+    // Default categories are seeded elsewhere (DatabaseCallback.onCreate for fresh installs,
+    // LetsTrackApp.seedDefaultCategoriesIfEmpty as a fallback for upgraded installs that never
+    // got that callback) - this ViewModel used to have its own third copy of that list, with
+    // names that had already drifted from DefaultCategories.ALL ("Transport" vs
+    // "Transportation", "Health & Fitness" vs "Healthcare", an extra "Investments" entry, a
+    // missing "Groceries"). Removed rather than reconciled: a screen-scoped ViewModel seeding
+    // the database on init was the wrong place for this responsibility regardless of drift.
 }
