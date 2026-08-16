@@ -17,3 +17,16 @@ local.properties
 *.aab
 output.json
 letstrack-release.keystore
+lets-track-keystore.jks
+keystore.properties
+
+# Merchant-data pipeline (datasets/) -- source PBF, generated intermediate outputs, and the
+# Python venv are all regenerable/re-downloadable, not original work. Only the small pipeline
+# scripts themselves are worth tracking. See datasets/extract.py's own doc comment for how to
+# regenerate everything below if ever needed.
+datasets/venv/
+datasets/data/
+datasets/output/*.csv
+datasets/output/*.json
+datasets/output/*.md
+!datasets/output/common_merchants_curated.json
